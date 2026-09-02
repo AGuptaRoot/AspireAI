@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",                          /* Target JavaScript version */
+    "module": "NodeNext",                        /* Specifies module code generation */
+    "moduleResolution": "NodeNext",              /* How modules get resolved */
+    "allowJs": true,                             /* Allow JavaScript files to be compiled */
+    "outDir": "./dist",                          /* Destination for compiled production code */
+    "rootDir": "./src",                          /* Point to your source files directory */
+    "strict": false,                             /* Keep false initially for fewer errors */
+    "esModuleInterop": true,                     /* Emits extra JavaScript for easy importing */
+    "skipLibCheck": true,                        /* Skip type checking of declaration files */
+    "forceConsistentCasingInFileNames": true     /* Disallow inconsistently-cased references */
+  },
+  "include": ["src/**/*"]                        /* Only check files inside src directory */
+}
