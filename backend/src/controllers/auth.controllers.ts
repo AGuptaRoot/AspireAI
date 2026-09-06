@@ -6,7 +6,7 @@ import userModel from "../models/users.models.js";
 import OtpModel from "../models/Otp.model.js";
 import SessionModel from "../models/session.models.js";
 import { config } from "../config/config.js";
-import sendOtpEmail from "../services/email.service.js";
+import { sendOtpEmail, sendPasswordResetEmail } from "../services/email.service.js";
 import { generateOtp } from "../utils/generateOtp.js";
 
 // Helper: Generate SHA256 hash
@@ -510,3 +510,271 @@ export const getMe = async (req: Request, res: Response) => {
         });
     }
 };
+
+/**
+ * Update Current Logged In User Profile
+ */
+export const updateProfile = async (req: Request, res: Response) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({
+                success: false,
+                message: "User is not authenticated",
+            });
+        }
+
+        const userId = req.user._id;
+        const {
+            username,
+            profession,
+            fullName,
+            phone,
+            location,
+            bio,
+            targetRole,
+            linkedinUrl,
+            githubUrl,
+            portfolioUrl,
+            skills,
+        } = req.body;
+
+        const updateData: Record<string, any> = {};
+
+        // Username validation & uniqueness check
+        if (username !== undefined) {
+            const trimmedUsername = String(username).trim();
+            if (trimmedUsername.length < 3) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Username must be at least 3 characters long",
+                });
+            }
+            if (trimmedUsername.length > 50) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Username cannot exceed 50 characters",
+                });
+            }
+
+            const existing = await userModel.findOne({
+                _id: { $ne: userId },
+                username: trimmedUsername,
+            });
+            if (existing) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Username is already taken by another user",
+                });
+            }
+            updateData.username = trimmedUsername;
+        }
+
+        // Profession validation
+        if (profession !== undefined) {
+            const trimmedProf = String(profession).trim();
+            if (trimmedProf.length < 2) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Profession must be at least 2 characters long",
+                });
+            }
+            updateData.profession = trimmedProf;
+        }
+
+        if (fullName !== undefined) {
+            updateData.fullName = String(fullName).trim();
+        }
+
+        if (phone !== undefined) {
+            updateData.phone = String(phone).trim();
+        }
+
+        if (location !== undefined) {
+            updateData.location = String(location).trim();
+        }
+
+        if (bio !== undefined) {
+            updateData.bio = String(bio).trim();
+        }
+
+        if (targetRole !== undefined) {
+            updateData.targetRole = String(targetRole).trim();
+        }
+
+        if (linkedinUrl !== undefined) {
+            updateData.linkedinUrl = String(linkedinUrl).trim();
+        }
+
+        if (githubUrl !== undefined) {
+            updateData.githubUrl = String(githubUrl).trim();
+        }
+
+        if (portfolioUrl !== undefined) {
+            updateData.portfolioUrl = String(portfolioUrl).trim();
+        }
+
+        if (skills !== undefined) {
+            if (Array.isArray(skills)) {
+                updateData.skills = skills.map((s) => String(s).trim()).filter(Boolean);
+            } else if (typeof skills === "string") {
+                updateData.skills = skills
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+            }
+        }
+
+        const updatedUser = await userModel.findByIdAndUpdate(
+            userId,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            user: updatedUser,
+        });
+    } catch (error: any) {
+        console.error("Update profile error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to update profile",
+        });
+    }
+};
+
+/**
+ * Forgot Password - Send Reset OTP
+ */
+export const forgotPassword = async (req: Request, res: Response) => {
+    try {
+        const { email } = req.body;
+        const normalizedEmail = String(email).toLowerCase().trim();
+
+        // 1. Verify user exists
+        const user = await userModel.findOne({ email: normalizedEmail });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "No account found with this email address.",
+            });
+        }
+
+        // 2. Delete any existing password reset OTPs for this user
+        await OtpModel.deleteMany({ user: user._id, purpose: "password_reset" });
+
+        // 3. Generate new OTP & save hashed OTP
+        const otp = generateOtp();
+        const otpHash = hashToken(String(otp));
+
+        await OtpModel.create({
+            email: user.email,
+            user: user._id,
+            otpHash,
+            purpose: "password_reset",
+            expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        });
+
+        // 4. Send Password Reset OTP email
+        await sendPasswordResetEmail(user.email, otp, user.username);
+
+        return res.status(200).json({
+            success: true,
+            message: "A password reset code has been sent to your email address.",
+        });
+    } catch (error: any) {
+        console.error("Forgot password error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to process forgot password request",
+        });
+    }
+};
+
+/**
+ * Reset Password with OTP & new password
+ */
+export const resetPassword = async (req: Request, res: Response) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        const normalizedEmail = String(email).toLowerCase().trim();
+        const otpHash = hashToken(String(otp).trim());
+
+        // 1. Verify user exists
+        const user = await userModel.findOne({ email: normalizedEmail });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "No account found with this email address.",
+            });
+        }
+
+        // 2. Find matching OTP
+        const otpRecord = await OtpModel.findOne({
+            email: normalizedEmail,
+            otpHash,
+            purpose: "password_reset",
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid or expired password reset code.",
+            });
+        }
+
+        // Check expiration
+        if (otpRecord.expiresAt && otpRecord.expiresAt < new Date()) {
+            await OtpModel.deleteOne({ _id: otpRecord._id });
+            return res.status(400).json({
+                success: false,
+                message: "Password reset code has expired. Please request a new code.",
+            });
+        }
+
+        // 3. Hash new password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+        // 4. Update user's password and ensure verified
+        user.password = hashedPassword;
+        user.isVerified = true;
+        await user.save();
+
+        // 5. Delete password reset OTPs
+        await OtpModel.deleteMany({ user: user._id, purpose: "password_reset" });
+
+        // 6. Revoke all active sessions for security
+        await SessionModel.updateMany(
+            { user: user._id, revoked: false },
+            { revoked: true }
+        );
+
+        // 7. Clear refresh token cookie if present
+        res.clearCookie("RefreshToken", {
+            httpOnly: true,
+            secure: config.Node_env === "production",
+            sameSite: "lax",
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Password reset successfully! You can now log in with your new password.",
+        });
+    } catch (error: any) {
+        console.error("Reset password error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to reset password",
+        });
+    }
+};
+

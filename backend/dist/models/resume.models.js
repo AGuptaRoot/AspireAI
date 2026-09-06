@@ -73,4 +73,5 @@ const ResumeSchema = new Schema({
     timestamps: true,
 });
 const ResumeModel = mongoose.model("resume", ResumeSchema);
+export const Resume = ResumeModel;
 export default ResumeModel;

@@ -6,6 +6,15 @@ export interface IUser extends Document {
     email: string;
     password: string;
     profession: string;
+    fullName?: string;
+    phone?: string;
+    location?: string;
+    bio?: string;
+    targetRole?: string;
+    linkedinUrl?: string;
+    githubUrl?: string;
+    portfolioUrl?: string;
+    skills?: string[];
     isVerified: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -38,6 +47,50 @@ const UserSchema = new Schema<IUser>(
             type: String,
             required: [true, "Profession is required"],
             trim: true,
+        },
+        fullName: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        phone: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        location: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        bio: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        targetRole: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        linkedinUrl: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        githubUrl: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        portfolioUrl: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        skills: {
+            type: [String],
+            default: [],
         },
         isVerified: {
             type: Boolean,

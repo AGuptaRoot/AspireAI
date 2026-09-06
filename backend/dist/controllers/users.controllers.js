@@ -1,4 +1,4 @@
-import { register as Register, login as Login, verifyOtp, resendOtp, refreshToken as RefreshToken, logout, logoutAll, getMe as userData, } from "./auth.controllers.js";
+import { register as Register, login as Login, verifyOtp, resendOtp, refreshToken as RefreshToken, logout, logoutAll, getMe as userData, forgotPassword, resetPassword, } from "./auth.controllers.js";
 import { generateOtp } from "../utils/generateOtp.js";
 import sendOtpEmail from "../services/email.service.js";
 export const TestGmailOtp = async (req, res) => {
@@ -21,4 +21,4 @@ export const TestGmailOtp = async (req, res) => {
         });
     }
 };
-export { Register, Login, verifyOtp, resendOtp, RefreshToken, logout, logoutAll, userData, };
+export { Register, Login, verifyOtp, resendOtp, RefreshToken, logout, logoutAll, userData, forgotPassword, resetPassword, };

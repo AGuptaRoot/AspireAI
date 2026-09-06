@@ -121,4 +121,5 @@ const ResumeSchema = new Schema<IResume>(
 
 const ResumeModel = mongoose.model<IResume>("resume", ResumeSchema);
 
+export const Resume = ResumeModel;
 export default ResumeModel;

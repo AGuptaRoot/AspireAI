@@ -1,12 +1,15 @@
 import React, { useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
-import { Sparkles, Mail, Lock, AlertCircle, Loader2, ArrowRight } from "lucide-react";
+import { Sparkles, Mail, Lock, AlertCircle, Loader2, ArrowRight, CheckCircle2 } from "lucide-react";
 import Navbar from "../components/Navbar";
 
 export const LoginPage: React.FC = () => {
     const { login, authLoading, authError, clearAuthError, pendingVerificationEmail } = useAppStore();
-    const [email, setEmail] = useState("");
+    const [searchParams] = useSearchParams();
+    const resetSuccess = searchParams.get("reset") === "success";
+    const initialEmail = searchParams.get("email") || "";
+    const [email, setEmail] = useState(initialEmail);
     const [password, setPassword] = useState("");
     const navigate = useNavigate();
     const location = useLocation();
@@ -44,6 +47,13 @@ export const LoginPage: React.FC = () => {
 
                     {/* Card */}
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-8 shadow-2xl backdrop-blur-sm">
+                        {resetSuccess && (
+                            <div className="mb-6 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2.5">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                                <span>Password reset successfully! Please sign in with your new password.</span>
+                            </div>
+                        )}
+
                         {authError && (
                             <div className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-start gap-2.5">
                                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -81,9 +91,17 @@ export const LoginPage: React.FC = () => {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                                    Password
-                                </label>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="block text-xs font-semibold text-slate-300">
+                                        Password
+                                    </label>
+                                    <Link
+                                        to={email ? `/forgot-password?email=${encodeURIComponent(email)}` : "/forgot-password"}
+                                        className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+                                    >
+                                        Forgot password?
+                                    </Link>
+                                </div>
                                 <div className="relative">
                                     <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                                     <input

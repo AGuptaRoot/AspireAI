@@ -5,17 +5,33 @@ import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import VerifyOtpPage from "./pages/VerifyOtpPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import DashboardPage from "./pages/DashboardPage";
+import InterviewPage from "./pages/InterviewPage";
+import InterviewResultPage from "./pages/InterviewResultPage";
+import ResumeBuilderPage from "./pages/ResumeBuilderPage";
+import ProfilePage from "./pages/ProfilePage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 
 const router = createBrowserRouter([
     {
         path: "/",
         element: <HomePage />,
+        errorElement: <RouteErrorBoundary />,
     },
     {
         path: "/login",
         element: <LoginPage />,
+    },
+    {
+        path: "/forgot-password",
+        element: <ForgotPasswordPage />,
+    },
+    {
+        path: "/reset-password",
+        element: <ResetPasswordPage />,
     },
     {
         path: "/register",
@@ -32,6 +48,43 @@ const router = createBrowserRouter([
                 <DashboardPage />
             </ProtectedRoute>
         ),
+        errorElement: <RouteErrorBoundary />,
+    },
+    {
+        path: "/builder",
+        element: (
+            <ProtectedRoute>
+                <ResumeBuilderPage />
+            </ProtectedRoute>
+        ),
+        errorElement: <RouteErrorBoundary />,
+    },
+    {
+        path: "/interview",
+        element: (
+            <ProtectedRoute>
+                <InterviewPage />
+            </ProtectedRoute>
+        ),
+        errorElement: <RouteErrorBoundary />,
+    },
+    {
+        path: "/interview/result/:id",
+        element: (
+            <ProtectedRoute>
+                <InterviewResultPage />
+            </ProtectedRoute>
+        ),
+        errorElement: <RouteErrorBoundary />,
+    },
+    {
+        path: "/profile",
+        element: (
+            <ProtectedRoute>
+                <ProfilePage />
+            </ProtectedRoute>
+        ),
+        errorElement: <RouteErrorBoundary />,
     },
     {
         path: "*",

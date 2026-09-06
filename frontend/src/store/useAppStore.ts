@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { User, Resume, ChatMessage } from "../types";
+import { User, Resume, ChatMessage, Interview, BuilderResume, UpdateProfilePayload } from "../types";
 import { api, setAuthToken, getAuthToken } from "../services/api";
 
 interface AppState {
@@ -23,12 +23,23 @@ interface AppState {
     isChatLoading: boolean;
     chatError: string | null;
 
+    // Interview State
+    interviews: Interview[];
+    isFetchingInterviews: boolean;
+
+    // Builder State
+    builderResumes: BuilderResume[];
+    activeBuilderResume: BuilderResume | null;
+    isBuilderLoading: boolean;
+    isAnalyzingBuilder: boolean;
+
     // Auth Actions
     checkAuth: () => Promise<void>;
     login: (payload: { email: string; password: string }) => Promise<boolean>;
     register: (payload: { username: string; email: string; password: string; profession: string }) => Promise<boolean>;
     verifyOtp: (payload: { email: string; otp: string | number }) => Promise<boolean>;
     resendOtp: (email: string) => Promise<boolean>;
+    updateProfile: (payload: UpdateProfilePayload) => Promise<boolean>;
     logout: () => Promise<void>;
     clearAuthError: () => void;
 
@@ -43,6 +54,18 @@ interface AppState {
     fetchChatHistory: (resumeId?: string) => Promise<void>;
     sendChatMessage: (query: string, resumeId?: string) => Promise<void>;
     clearChatHistory: (resumeId?: string) => Promise<void>;
+
+    // Interview Actions
+    fetchInterviews: () => Promise<void>;
+
+    // Builder Actions
+    fetchBuilderResumes: () => Promise<void>;
+    generateAiResume: (payload?: { resumeId?: string; targetRole?: string; title?: string; customInstructions?: string }) => Promise<BuilderResume | null>;
+    createBuilderResume: (payload: { title: string; targetRole: string; content: string; blocks?: any[] }) => Promise<BuilderResume | null>;
+    updateBuilderResume: (id: string, payload: { title?: string; targetRole?: string; content?: string; blocks?: any[] }) => Promise<boolean>;
+    deleteBuilderResume: (id: string) => Promise<boolean>;
+    analyzeBuilderResume: (id: string, payload?: { content?: string; blocks?: any[] }) => Promise<boolean>;
+    setActiveBuilderResume: (resume: BuilderResume | null) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -63,6 +86,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     isChatLoading: false,
     chatError: null,
 
+    interviews: [],
+    isFetchingInterviews: false,
+
+    builderResumes: [],
+    activeBuilderResume: null,
+    isBuilderLoading: false,
+    isAnalyzingBuilder: false,
+
     checkAuth: async () => {
         set({ isCheckingAuth: true });
         const token = getAuthToken();
@@ -75,8 +106,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             const res = await api.auth.getMe();
             if (res.success && res.user) {
                 set({ user: res.user, isAuthenticated: true, isCheckingAuth: false });
-                // Automatically fetch user's resumes
+                // Automatically fetch user's resumes and interviews
                 get().fetchResumes();
+                get().fetchInterviews();
+                get().fetchBuilderResumes();
             } else {
                 setAuthToken(null);
                 set({ user: null, isAuthenticated: false, isCheckingAuth: false });
@@ -101,6 +134,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                     pendingVerificationEmail: null,
                 });
                 get().fetchResumes();
+                get().fetchInterviews();
+                get().fetchBuilderResumes();
                 return true;
             }
             return false;
@@ -146,6 +181,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                     pendingVerificationEmail: null,
                 });
                 get().fetchResumes();
+                get().fetchInterviews();
+                get().fetchBuilderResumes();
                 return true;
             }
             return false;
@@ -165,6 +202,22 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
     },
 
+    updateProfile: async (payload) => {
+        set({ authLoading: true, authError: null });
+        try {
+            const res = await api.auth.updateProfile(payload);
+            if (res.success && res.user) {
+                set({ user: res.user, authLoading: false, authError: null });
+                return true;
+            }
+            set({ authLoading: false });
+            return false;
+        } catch (err: any) {
+            set({ authLoading: false, authError: err.message || "Failed to update profile" });
+            return false;
+        }
+    },
+
     logout: async () => {
         try {
             await api.auth.logout();
@@ -178,6 +231,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             resumes: [],
             activeResume: null,
             chatMessages: [],
+            interviews: [],
+            builderResumes: [],
+            activeBuilderResume: null,
         });
     },
 
@@ -329,5 +385,143 @@ export const useAppStore = create<AppState>((set, get) => ({
         } catch (err: any) {
             console.error("Failed to clear chat history:", err.message);
         }
+    },
+
+    fetchInterviews: async () => {
+        set({ isFetchingInterviews: true });
+        try {
+            const res = await api.interview.getAll();
+            if (res.success && res.interviews) {
+                set({ interviews: res.interviews, isFetchingInterviews: false });
+            } else {
+                set({ isFetchingInterviews: false });
+            }
+        } catch (err: any) {
+            console.error("Failed to fetch interviews:", err.message);
+            set({ isFetchingInterviews: false });
+        }
+    },
+
+    fetchBuilderResumes: async () => {
+        set({ isBuilderLoading: true });
+        try {
+            const res = await api.builder.getAll();
+            if (res.success && res.resumes) {
+                set({
+                    builderResumes: res.resumes,
+                    isBuilderLoading: false,
+                    activeBuilderResume: get().activeBuilderResume || (res.resumes.length > 0 ? res.resumes[0] : null),
+                });
+            } else {
+                set({ isBuilderLoading: false });
+            }
+        } catch (err: any) {
+            console.error("Failed to fetch builder resumes:", err.message);
+            set({ isBuilderLoading: false });
+        }
+    },
+
+    generateAiResume: async (payload) => {
+        set({ isBuilderLoading: true });
+        try {
+            const res = await api.builder.generate(payload);
+            if (res.success && res.resume) {
+                set((state) => ({
+                    builderResumes: [res.resume!, ...state.builderResumes],
+                    activeBuilderResume: res.resume,
+                    isBuilderLoading: false,
+                }));
+                return res.resume;
+            }
+            set({ isBuilderLoading: false });
+            return null;
+        } catch (err: any) {
+            console.error("Failed to generate AI resume:", err.message);
+            set({ isBuilderLoading: false });
+            return null;
+        }
+    },
+
+    createBuilderResume: async (payload) => {
+        set({ isBuilderLoading: true });
+        try {
+            const res = await api.builder.create(payload);
+            if (res.success && res.resume) {
+                set((state) => ({
+                    builderResumes: [res.resume!, ...state.builderResumes],
+                    activeBuilderResume: res.resume,
+                    isBuilderLoading: false,
+                }));
+                return res.resume;
+            }
+            set({ isBuilderLoading: false });
+            return null;
+        } catch (err: any) {
+            console.error("Failed to create builder resume:", err.message);
+            set({ isBuilderLoading: false });
+            return null;
+        }
+    },
+
+    updateBuilderResume: async (id, payload) => {
+        try {
+            const res = await api.builder.update(id, payload);
+            if (res.success && res.resume) {
+                set((state) => ({
+                    builderResumes: state.builderResumes.map((r) => (r._id === id ? res.resume! : r)),
+                    activeBuilderResume: state.activeBuilderResume?._id === id ? res.resume! : state.activeBuilderResume,
+                }));
+                return true;
+            }
+            return false;
+        } catch (err: any) {
+            console.error("Failed to update builder resume:", err.message);
+            return false;
+        }
+    },
+
+    deleteBuilderResume: async (id) => {
+        try {
+            const res = await api.builder.delete(id);
+            if (res.success) {
+                set((state) => {
+                    const remaining = state.builderResumes.filter((r) => r._id !== id);
+                    return {
+                        builderResumes: remaining,
+                        activeBuilderResume: state.activeBuilderResume?._id === id ? (remaining.length > 0 ? remaining[0] : null) : state.activeBuilderResume,
+                    };
+                });
+                return true;
+            }
+            return false;
+        } catch (err: any) {
+            console.error("Failed to delete builder resume:", err.message);
+            return false;
+        }
+    },
+
+    analyzeBuilderResume: async (id, payload) => {
+        set({ isAnalyzingBuilder: true });
+        try {
+            const res = await api.builder.analyze(id, payload);
+            if (res.success && res.resume) {
+                set((state) => ({
+                    builderResumes: state.builderResumes.map((r) => (r._id === id ? res.resume! : r)),
+                    activeBuilderResume: state.activeBuilderResume?._id === id ? res.resume! : state.activeBuilderResume,
+                    isAnalyzingBuilder: false,
+                }));
+                return true;
+            }
+            set({ isAnalyzingBuilder: false });
+            return false;
+        } catch (err: any) {
+            console.error("Failed to analyze builder resume:", err.message);
+            set({ isAnalyzingBuilder: false });
+            return false;
+        }
+    },
+
+    setActiveBuilderResume: (resume) => {
+        set({ activeBuilderResume: resume });
     },
 }));

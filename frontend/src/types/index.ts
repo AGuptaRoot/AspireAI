@@ -3,8 +3,32 @@ export interface User {
     username: string;
     email: string;
     profession: string;
+    fullName?: string;
+    phone?: string;
+    location?: string;
+    bio?: string;
+    targetRole?: string;
+    linkedinUrl?: string;
+    githubUrl?: string;
+    portfolioUrl?: string;
+    skills?: string[];
     isVerified: boolean;
     createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface UpdateProfilePayload {
+    username?: string;
+    profession?: string;
+    fullName?: string;
+    phone?: string;
+    location?: string;
+    bio?: string;
+    targetRole?: string;
+    linkedinUrl?: string;
+    githubUrl?: string;
+    portfolioUrl?: string;
+    skills?: string[] | string;
 }
 
 export interface ResumeAnalysis {
@@ -55,6 +79,47 @@ export interface ChatMessage {
     createdAt?: string;
 }
 
+export interface InterviewQuestion {
+    questionId: number;
+    question: string;
+    options: string[];
+    correctOptionIndex?: number;
+    explanation?: string;
+    userSelectedIndex?: number | null;
+}
+
+export interface Interview {
+    _id: string;
+    field: string;
+    difficulty: "Junior" | "Mid-Level" | "Senior";
+    totalQuestions: number;
+    durationMinutes: number;
+    durationSeconds?: number;
+    timeSpentSeconds?: number;
+    questions: InterviewQuestion[];
+    score?: number;
+    percentage?: number;
+    passed?: boolean;
+    status: "in-progress" | "completed" | "timed-out";
+    feedback?: string;
+    createdAt: string;
+    completedAt?: string;
+}
+
+export interface BuilderResume {
+    _id: string;
+    user: string;
+    title: string;
+    targetRole: string;
+    sourceResume?: string;
+    content: string;
+    blocks?: any[];
+    atsAnalysis?: ResumeAnalysis;
+    status: "draft" | "generated" | "analyzed";
+    createdAt: string;
+    updatedAt: string;
+}
+
 export interface ApiResponse<T = any> {
     success: boolean;
     message?: string;
@@ -68,5 +133,11 @@ export interface ApiResponse<T = any> {
     sources?: string[];
     sessionId?: string;
     messages?: ChatMessage[];
+    interview?: Interview;
+    interviews?: Interview[];
+    result?: Interview;
+    builderResume?: BuilderResume;
+    builderResumes?: BuilderResume[];
     errors?: Array<{ field: string; message: string }>;
 }
+

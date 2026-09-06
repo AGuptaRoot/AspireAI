@@ -1,4 +1,4 @@
-import { ApiResponse } from "../types";
+import { ApiResponse, UpdateProfilePayload } from "../types";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
@@ -110,12 +110,30 @@ export const api = {
                 body: JSON.stringify(payload),
             }),
 
+        forgotPassword: (payload: { email: string }) =>
+            request<ApiResponse>("/api/auth/forgot-password", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+
+        resetPassword: (payload: { email: string; otp: string | number; newPassword: string }) =>
+            request<ApiResponse>("/api/auth/reset-password", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+
         logout: () =>
             request<ApiResponse>("/api/auth/logout", {
                 method: "POST",
             }),
 
         getMe: () => request<ApiResponse>("/api/auth/me"),
+
+        updateProfile: (payload: UpdateProfilePayload) =>
+            request<ApiResponse>("/api/auth/profile", {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
     },
 
     resume: {
@@ -162,4 +180,70 @@ export const api = {
                 method: "DELETE",
             }),
     },
+
+    interview: {
+        start: (payload?: { field?: string; difficulty?: string; useResume?: boolean }) =>
+            request<ApiResponse>("/api/interview/start", {
+                method: "POST",
+                body: JSON.stringify(payload || {}),
+            }),
+
+        submit: (id: string, payload: { answers: Record<number, number>; timeSpentSeconds: number; timedOut?: boolean }) =>
+            request<ApiResponse>(`/api/interview/${id}/submit`, {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+
+        getById: (id: string) => request<ApiResponse>(`/api/interview/${id}`),
+
+        getAll: () => request<ApiResponse>("/api/interview"),
+    },
+
+    builder: {
+        generate: (payload?: { resumeId?: string; targetRole?: string; title?: string; customInstructions?: string }) =>
+            request<ApiResponse>("/api/builder/generate", {
+                method: "POST",
+                body: JSON.stringify(payload || {}),
+            }),
+
+        create: (payload: { title: string; targetRole: string; content: string; blocks?: any[] }) =>
+            request<ApiResponse>("/api/builder", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+
+        getAll: () => request<ApiResponse>("/api/builder"),
+
+        getById: (id: string) => request<ApiResponse>(`/api/builder/${id}`),
+
+        update: (id: string, payload: { title?: string; targetRole?: string; content?: string; blocks?: any[] }) =>
+            request<ApiResponse>(`/api/builder/${id}`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
+
+        delete: (id: string) =>
+            request<ApiResponse>(`/api/builder/${id}`, {
+                method: "DELETE",
+            }),
+
+        analyze: (id: string, payload?: { content?: string; blocks?: any[] }) =>
+            request<ApiResponse>(`/api/builder/${id}/analyze`, {
+                method: "POST",
+                body: JSON.stringify(payload || {}),
+            }),
+
+        aiWrite: (payload: {
+            prompt?: string;
+            selectedText?: string;
+            contextText?: string;
+            targetRole?: string;
+            action?: "improve" | "xyz" | "concise" | "roleAlign" | "grammar" | "custom";
+        }) =>
+            request<ApiResponse<{ rewrittenText: string }>>("/api/builder/ai-write", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+    },
 };
+

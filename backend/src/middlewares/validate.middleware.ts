@@ -16,9 +16,11 @@ export const validateSchema = (schema: ZodType) => {
 
             return next();
         } catch (error: any) {
-            if (error instanceof ZodError) {
-                const formattedErrors = error.issues.map((err) => ({
-                    field: err.path.slice(1).join("."),
+            if (error instanceof ZodError || error?.name === "ZodError") {
+                const formattedErrors = (error.issues || []).map((err: any) => ({
+                    field: err.path && err.path.length > 1
+                        ? err.path.slice(1).join(".")
+                        : (err.path && err.path[0] ? String(err.path[0]) : "field"),
                     message: err.message,
                 }));
 

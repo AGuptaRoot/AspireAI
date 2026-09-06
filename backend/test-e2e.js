@@ -5,6 +5,7 @@ import userModel from "./dist/models/users.models.js";
 import ResumeModel from "./dist/models/resume.models.js";
 import SessionModel from "./dist/models/session.models.js";
 import ChatSessionModel from "./dist/models/chat.models.js";
+import InterviewModel from "./dist/models/interview.models.js";
 import crypto from "crypto";
 
 // Minimal valid PDF binary
@@ -139,6 +140,104 @@ async function runTests() {
         if (loginRes.status !== 200 || !loginData.accessToken) throw new Error("Login failed");
         accessToken = loginData.accessToken;
 
+        // 5b. Forgot Password Request
+        console.log("\n5️⃣b Testing POST /api/auth/forgot-password...");
+        const forgotRes = await fetch(`${BASE_URL}/api/auth/forgot-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: testEmail }),
+        });
+        const forgotData = await forgotRes.json();
+        console.log("   Status:", forgotRes.status, "Message:", forgotData.message);
+        if (forgotRes.status !== 200) throw new Error("Forgot password request failed");
+
+        // Retrieve the reset OTP from DB
+        const resetOtpRecord = await OtpModel.findOne({ email: testEmail, purpose: "password_reset" });
+        if (!resetOtpRecord) throw new Error("Password reset OTP record not found in DB");
+
+        const resetOtpValue = "998877";
+        resetOtpRecord.otpHash = crypto.createHash("sha256").update(resetOtpValue).digest("hex");
+        await resetOtpRecord.save();
+
+        // 5c. Reset Password
+        console.log("\n5️⃣c Testing POST /api/auth/reset-password...");
+        const newPassword = "NewSecurePassword123!";
+        const resetRes = await fetch(`${BASE_URL}/api/auth/reset-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: testEmail,
+                otp: resetOtpValue,
+                newPassword: newPassword,
+            }),
+        });
+        const resetData = await resetRes.json();
+        console.log("   Status:", resetRes.status, "Message:", resetData.message);
+        if (resetRes.status !== 200) throw new Error("Reset password failed");
+
+        // 5d. Verify Login with New Password
+        console.log("\n5️⃣d Testing Login with New Password...");
+        const newLoginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: testEmail,
+                password: newPassword,
+            }),
+        });
+        const newLoginData = await newLoginRes.json();
+        console.log("   Status:", newLoginRes.status, "Login Success:", newLoginData.success);
+        if (newLoginRes.status !== 200 || !newLoginData.accessToken) throw new Error("Login with new password failed");
+        accessToken = newLoginData.accessToken;
+
+        // 5e. Update User Profile & Verification
+        console.log("\n5️⃣e Testing PUT /api/auth/profile (Update Candidate Profile)...");
+        const profilePayload = {
+            fullName: "Adarsh K. Gupta",
+            profession: "Principal AI Systems Architect",
+            targetRole: "VP of Engineering & AI",
+            phone: "+1 (555) 234-5678",
+            location: "San Francisco, CA",
+            bio: "Specialized in distributed LLM architectures and automated ATS pipelines.",
+            linkedinUrl: "https://linkedin.com/in/adarshgupta",
+            githubUrl: "https://github.com/adarshgupta",
+            portfolioUrl: "https://adarsh.tech",
+            skills: ["TypeScript", "Node.js", "React", "Vector DB", "LangChain"],
+        };
+        const updateProfileRes = await fetch(`${BASE_URL}/api/auth/profile`, {
+            method: "PUT",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(profilePayload),
+        });
+        const updateProfileData = await updateProfileRes.json();
+        console.log("   Status:", updateProfileRes.status, "Message:", updateProfileData.message);
+        console.log("   Updated Full Name:", updateProfileData.user?.fullName);
+        console.log("   Updated Profession:", updateProfileData.user?.profession);
+        console.log("   Updated Skills:", updateProfileData.user?.skills);
+
+        if (
+            updateProfileRes.status !== 200 ||
+            updateProfileData.user?.fullName !== profilePayload.fullName ||
+            updateProfileData.user?.targetRole !== profilePayload.targetRole ||
+            updateProfileData.user?.skills?.length !== profilePayload.skills.length
+        ) {
+            throw new Error("Update candidate profile failed");
+        }
+
+        // Verify GET /api/auth/me returns updated fields
+        console.log("\n5️⃣f Testing GET /api/auth/me (Verify persisted profile)...");
+        const meRes = await fetch(`${BASE_URL}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const meData = await meRes.json();
+        console.log("   Status:", meRes.status, "Username:", meData.user?.username, "Target Role:", meData.user?.targetRole);
+        if (meRes.status !== 200 || meData.user?.targetRole !== profilePayload.targetRole) {
+            throw new Error("GET /api/auth/me failed to return updated profile");
+        }
+
         // 6. Upload PDF Resume & Check AI ATS Score Processing
         console.log("\n6️⃣ Testing POST /api/resume/upload (PDF parsing + AI ATS analysis)...");
         const formData = new FormData();
@@ -235,7 +334,89 @@ async function runTests() {
         });
         const clearChatData = await clearChatRes.json();
         console.log("   Status:", clearChatRes.status, "Message:", clearChatData.message);
-        if (clearChatRes.status !== 200) throw new Error("Clear chat history failed");
+        // 12b. AI Resume Builder Tests
+        console.log("\n1️⃣2️⃣b Testing POST /api/builder/generate (AI generates resume based on old resume)...");
+        const generateBuilderRes = await fetch(`${BASE_URL}/api/builder/generate`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                resumeId: uploadedResumeId,
+                targetRole: "Full Stack Architect",
+                title: "Architect Level AI Resume",
+            }),
+        });
+        const generateBuilderData = await generateBuilderRes.json();
+        console.log("   Status:", generateBuilderRes.status, "Message:", generateBuilderData.message);
+        console.log("   Generated Resume Title:", generateBuilderData.resume?.title);
+        console.log("   Content Snippet:\n   " + generateBuilderData.resume?.content?.slice(0, 100).replace(/\n/g, " ") + "...");
+        if (generateBuilderRes.status !== 201 || !generateBuilderData.resume?._id) {
+            throw new Error("AI Resume Builder generation failed");
+        }
+        const createdBuilderId = generateBuilderData.resume._id;
+
+        // 12c. List Builder Resumes
+        console.log("\n1️⃣2️⃣c Testing GET /api/builder (List all user builder resumes)...");
+        const listBuilderRes = await fetch(`${BASE_URL}/api/builder`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const listBuilderData = await listBuilderRes.json();
+        console.log("   Status:", listBuilderRes.status, "Total Builder Resumes:", listBuilderData.count);
+        if (listBuilderRes.status !== 200 || listBuilderData.count < 1) {
+            throw new Error("List builder resumes failed");
+        }
+
+        // 12d. Update Builder Resume
+        console.log("\n1️⃣2️⃣d Testing PUT /api/builder/:id (Update resume content)...");
+        const updateBuilderRes = await fetch(`${BASE_URL}/api/builder/${createdBuilderId}`, {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                title: "Master Full Stack Architect Resume (Edited)",
+                content: generateBuilderData.resume.content + "\n\n## Additional Achievements\n- Accelerated delivery velocity across 4 cross-functional squads.",
+            }),
+        });
+        const updateBuilderData = await updateBuilderRes.json();
+        console.log("   Status:", updateBuilderRes.status, "Updated Title:", updateBuilderData.resume?.title);
+        if (updateBuilderRes.status !== 200 || !updateBuilderData.resume?.title?.includes("Edited")) {
+            throw new Error("Update builder resume failed");
+        }
+
+        // 12e. AI Analysis of Builder Resume
+        console.log("\n1️⃣2️⃣e Testing POST /api/builder/:id/analyze (AI ATS evaluation & scoring of edited resume)...");
+        const analyzeBuilderRes = await fetch(`${BASE_URL}/api/builder/${createdBuilderId}/analyze`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                content: updateBuilderData.resume.content,
+            }),
+        });
+        const analyzeBuilderData = await analyzeBuilderRes.json();
+        console.log("   Status:", analyzeBuilderRes.status, "ATS Score:", analyzeBuilderData.analysis?.atsScore + "/100", "Grade:", analyzeBuilderData.analysis?.atsGrade);
+        console.log("   Top Strength:", analyzeBuilderData.analysis?.strengths?.[0]);
+        if (analyzeBuilderRes.status !== 200 || analyzeBuilderData.analysis?.atsScore === undefined) {
+            throw new Error("Analyze builder resume failed");
+        }
+
+        // 12f. Delete Builder Resume
+        console.log("\n1️⃣2️⃣f Testing DELETE /api/builder/:id (CRUD delete)...");
+        const deleteBuilderRes = await fetch(`${BASE_URL}/api/builder/${createdBuilderId}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const deleteBuilderData = await deleteBuilderRes.json();
+        console.log("   Status:", deleteBuilderRes.status, "Message:", deleteBuilderData.message);
+        if (deleteBuilderRes.status !== 200) {
+            throw new Error("Delete builder resume failed");
+        }
 
         // 13. Delete Resume & Associated Data
         console.log("\n1️⃣3️⃣ Testing DELETE /api/resume/:id...");
@@ -246,6 +427,71 @@ async function runTests() {
         const deleteData = await deleteRes.json();
         console.log("   Status:", deleteRes.status, "Message:", deleteData.message);
         if (deleteRes.status !== 200) throw new Error("Delete resume failed");
+
+        // 13b. AI Interviewer Feature Tests
+        console.log("\n1️⃣3️⃣b Testing POST /api/interview/start (AI generates 10 MCQ rounds for field)...");
+        const startInterviewRes = await fetch(`${BASE_URL}/api/interview/start`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                field: "Full Stack Engineer",
+                difficulty: "Mid-Level",
+            }),
+        });
+        const startInterviewData = await startInterviewRes.json();
+        console.log("   Status:", startInterviewRes.status, "Message:", startInterviewData.message);
+        console.log("   Total Rounds:", startInterviewData.interview?.totalQuestions, "Duration:", startInterviewData.interview?.durationMinutes + " mins");
+        console.log("   Round 1 Question:", startInterviewData.interview?.questions[0]?.question?.slice(0, 60) + "...");
+        if (startInterviewRes.status !== 201 || startInterviewData.interview?.questions?.length !== 10) {
+            throw new Error("AI Interview start failed");
+        }
+        const createdInterviewId = startInterviewData.interview._id;
+
+        // 13c. Submit Interview Assessment
+        console.log("\n1️⃣3️⃣c Testing POST /api/interview/:id/submit (10-Round scoring & timer)...");
+        const submitInterviewRes = await fetch(`${BASE_URL}/api/interview/${createdInterviewId}/submit`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                answers: { 1: 1, 2: 1, 3: 1, 4: 0, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1 },
+                timeSpentSeconds: 145,
+            }),
+        });
+        const submitInterviewData = await submitInterviewRes.json();
+        console.log("   Status:", submitInterviewRes.status, "Score:", submitInterviewData.result?.score + "/10 (" + submitInterviewData.result?.percentage + "%)");
+        console.log("   Passed Status:", submitInterviewData.result?.passed, "Time Spent:", submitInterviewData.result?.timeSpentSeconds + "s");
+        console.log("   Feedback:\n   " + submitInterviewData.result?.feedback);
+        if (submitInterviewRes.status !== 200 || submitInterviewData.result?.score === undefined) {
+            throw new Error("Submit interview assessment failed");
+        }
+
+        // 13d. Retrieve Interview Result
+        console.log("\n1️⃣3️⃣d Testing GET /api/interview/:id (Scorecard & Solutions)...");
+        const getInterviewRes = await fetch(`${BASE_URL}/api/interview/${createdInterviewId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const getInterviewData = await getInterviewRes.json();
+        console.log("   Status:", getInterviewRes.status, "Questions with Solutions:", getInterviewData.interview?.questions?.length);
+        if (getInterviewRes.status !== 200 || !getInterviewData.interview?.questions[0]?.explanation) {
+            throw new Error("Get interview scorecard failed");
+        }
+
+        // 13e. Retrieve User Interview History
+        console.log("\n1️⃣3️⃣e Testing GET /api/interview (Past Interviews History)...");
+        const listInterviewRes = await fetch(`${BASE_URL}/api/interview`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const listInterviewData = await listInterviewRes.json();
+        console.log("   Status:", listInterviewRes.status, "Total User Interviews:", listInterviewData.count);
+        if (listInterviewRes.status !== 200 || listInterviewData.count < 1) {
+            throw new Error("Get user interviews history failed");
+        }
 
         // 14. Logout
         console.log("\n1️⃣4️⃣ Testing POST /api/auth/logout...");
@@ -263,6 +509,7 @@ async function runTests() {
         await SessionModel.deleteMany({ user: registeredUserId });
         await ResumeModel.deleteMany({ user: registeredUserId });
         await ChatSessionModel.deleteMany({ user: registeredUserId });
+        await InterviewModel.deleteMany({ user: registeredUserId });
         await OtpModel.deleteMany({ email: testEmail });
         console.log("   Cleaned up test candidate successfully.");
 

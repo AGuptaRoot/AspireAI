@@ -7,6 +7,8 @@ import {
     logout,
     logoutAll,
     getMe as userData,
+    forgotPassword,
+    resetPassword,
 } from "./auth.controllers.js";
 
 // Test Gmail OTP helper
@@ -43,4 +45,7 @@ export {
     logout,
     logoutAll,
     userData,
+    forgotPassword,
+    resetPassword,
 };
+

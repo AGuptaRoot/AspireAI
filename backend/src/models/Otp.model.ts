@@ -5,6 +5,7 @@ export interface IOtp extends Document {
     email: string;
     user: mongoose.Types.ObjectId;
     otpHash: string;
+    purpose?: "verification" | "password_reset";
     createdAt: Date;
     expiresAt: Date;
 }
@@ -25,6 +26,12 @@ const OtpSchema = new Schema<IOtp>({
     otpHash: {
         type: String,
         required: [true, "OTP hash is required"],
+    },
+    purpose: {
+        type: String,
+        enum: ["verification", "password_reset"],
+        default: "verification",
+        index: true,
     },
     createdAt: {
         type: Date,

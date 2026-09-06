@@ -1,9 +1,17 @@
 @import "tailwindcss";
 
-@layer base {
-  body {
-    @apply bg-slate-950 text-slate-100 font-sans antialiased min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200;
-  }
+:root,
+html {
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+body {
+  background-color: #020617;
+  color: #f8fafc;
+  min-height: 100vh;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Custom scrollbar */
@@ -32,4 +40,36 @@
 
 .animate-pulse-subtle {
   animation: pulse-subtle 3s ease-in-out infinite;
+}
+
+/* Print Media Styles for Resume Export */
+@media print {
+  /* Hide all web app navigation, headers, sidebars, and buttons */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Only make the resume paper document visible */
+  #resume-paper-document,
+  #resume-paper-document * {
+    visibility: visible;
+  }
+
+  #resume-paper-document {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 15mm 20mm !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
 }

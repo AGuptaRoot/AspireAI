@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import Navbar from "../components/Navbar";
 import ResumeUploader from "../components/ResumeUploader";
@@ -12,8 +12,15 @@ import {
     Sparkles,
     Trash2,
     CheckCircle2,
+    XCircle,
     Calendar,
     Plus,
+    BrainCircuit,
+    Award,
+    Clock,
+    TrendingUp,
+    Target,
+    ArrowRight,
 } from "lucide-react";
 
 export const DashboardPage: React.FC = () => {
@@ -26,9 +33,20 @@ export const DashboardPage: React.FC = () => {
         activeResume,
         setActiveResume,
         deleteResume,
+        interviews,
+        fetchInterviews,
+        isFetchingInterviews,
+        builderResumes,
+        fetchBuilderResumes,
     } = useAppStore();
 
     const [showUploader, setShowUploader] = useState(false);
+
+    useEffect(() => {
+        // Fetch fresh interviews and builder resumes when entering dashboard
+        fetchInterviews();
+        fetchBuilderResumes();
+    }, [fetchInterviews, fetchBuilderResumes]);
 
     useEffect(() => {
         // If no active resume but resumes exist, pick first
@@ -41,6 +59,34 @@ export const DashboardPage: React.FC = () => {
         setSearchParams({ tab: tabName });
     };
 
+    // Calculate aggregated interview statistics
+    const completedInterviews = interviews.filter(
+        (i) => i.status === "completed" || i.status === "timed-out" || i.score !== undefined
+    );
+    const totalInterviews = completedInterviews.length;
+    const avgPercentage =
+        totalInterviews > 0
+            ? Math.round(
+                  completedInterviews.reduce((acc, i) => acc + (i.percentage ?? 0), 0) / totalInterviews
+              )
+            : 0;
+    const avgScore =
+        totalInterviews > 0
+            ? (
+                  completedInterviews.reduce((acc, i) => acc + (i.score ?? 0), 0) / totalInterviews
+              ).toFixed(1)
+            : "0";
+    const passedCount = completedInterviews.filter((i) => i.passed).length;
+    const passRate = totalInterviews > 0 ? Math.round((passedCount / totalInterviews) * 100) : 0;
+    const latestInterview = completedInterviews[0];
+
+    const formatTime = (seconds?: number) => {
+        if (!seconds && seconds !== 0) return "N/A";
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}m ${secs}s`;
+    };
+
     return (
         <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
             <Navbar />
@@ -51,32 +97,143 @@ export const DashboardPage: React.FC = () => {
                     <div>
                         <div className="flex items-center gap-2">
                             <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
-                                Welcome, <span className="text-indigo-400">{user?.username}</span>!
+                                Welcome, <span className="text-indigo-400">{user?.fullName || user?.username}</span>!
                             </h1>
                             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                                {user?.profession || "Candidate"}
+                                {user?.targetRole || user?.profession || "Candidate"}
                             </span>
                         </div>
                         <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                            Analyze your resume ATS compatibility, discover keyword gaps, and get personalized career guidance.
+                            Analyze your ATS resume compatibility, test your technical skills in 10-round AI interviews, and track performance scores.
                         </p>
                     </div>
 
-                    {/* Quick Action: Upload new */}
-                    <button
-                        onClick={() => {
-                            setShowUploader(!showUploader);
-                            setTab("scanner");
-                        }}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
-                    >
-                        <Plus className="w-4 h-4" />
-                        {showUploader ? "Close Uploader" : "Upload New Resume"}
-                    </button>
+                    {/* Quick Actions */}
+                    <div className="flex flex-wrap items-center gap-2.5">
+                        <Link
+                            to="/builder"
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+                        >
+                            <Sparkles className="w-4 h-4 text-amber-300" />
+                            <span>AI Resume Builder</span>
+                        </Link>
+
+                        <Link
+                            to="/interview"
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                        >
+                            <BrainCircuit className="w-4 h-4" />
+                            <span>Start AI Interview</span>
+                        </Link>
+
+                        <button
+                            onClick={() => {
+                                setShowUploader(!showUploader);
+                                setTab("scanner");
+                            }}
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                        >
+                            <Plus className="w-4 h-4" />
+                            {showUploader ? "Close Uploader" : "Upload New Resume"}
+                        </button>
+                    </div>
                 </div>
 
-                {/* Collapsible Uploader (if toggled or no resume exists) */}
-                {(showUploader || resumes.length === 0) && (
+                {/* Performance Analytics Overview Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    {/* Card 1: ATS Resume Score */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-medium text-slate-400">Latest ATS Score</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                                <FileText className="w-4 h-4" />
+                            </div>
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-2xl sm:text-3xl font-black text-white">
+                                {activeResume?.analysis?.atsScore !== undefined
+                                    ? activeResume.analysis.atsScore
+                                    : "--"}
+                            </span>
+                            <span className="text-xs text-slate-500 font-medium">/ 100</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-2 truncate">
+                            {activeResume ? activeResume.fileName : "No resume analyzed yet"}
+                        </p>
+                    </div>
+
+                    {/* Card 2: AI Interview Average Percentage */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-medium text-slate-400">Interview Avg Score</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                                <TrendingUp className="w-4 h-4" />
+                            </div>
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                            <span className={`text-2xl sm:text-3xl font-black ${avgPercentage >= 60 ? "text-emerald-400" : totalInterviews > 0 ? "text-amber-400" : "text-white"}`}>
+                                {totalInterviews > 0 ? `${avgPercentage}%` : "--%"}
+                            </span>
+                            {totalInterviews > 0 && (
+                                <span className="text-xs text-slate-400 font-medium">
+                                    ({avgScore}/10 avg)
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-2">
+                            {totalInterviews > 0
+                                ? `Across ${totalInterviews} technical round${totalInterviews > 1 ? "s" : ""}`
+                                : "Take a 5-min AI interview"}
+                        </p>
+                    </div>
+
+                    {/* Card 3: Completed Assessments */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-medium text-slate-400">Assessments Taken</span>
+                            <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-400 flex items-center justify-center">
+                                <BrainCircuit className="w-4 h-4" />
+                            </div>
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-2xl sm:text-3xl font-black text-white">
+                                {totalInterviews}
+                            </span>
+                            <span className="text-xs text-slate-500 font-medium">completed</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-2 truncate">
+                            {latestInterview
+                                ? `Latest: ${latestInterview.field}`
+                                : "10 MCQ questions per test"}
+                        </p>
+                    </div>
+
+                    {/* Card 4: Pass Rate */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-medium text-slate-400">Pass Rate (≥60%)</span>
+                            <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center">
+                                <Target className="w-4 h-4" />
+                            </div>
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-2xl sm:text-3xl font-black text-purple-400">
+                                {totalInterviews > 0 ? `${passRate}%` : "--%"}
+                            </span>
+                            {totalInterviews > 0 && (
+                                <span className="text-xs text-slate-500 font-medium">
+                                    ({passedCount}/{totalInterviews})
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-2">
+                            {passedCount > 0 ? `${passedCount} tests cleared` : "Passing threshold: 60%"}
+                        </p>
+                    </div>
+                </div>
+
+                {/* Collapsible Uploader (if toggled) */}
+                {showUploader && (
                     <div className="mb-8">
                         <ResumeUploader />
                     </div>
@@ -86,7 +243,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="flex items-center gap-2 border-b border-slate-800/80 mb-8 overflow-x-auto pb-1">
                     <button
                         onClick={() => setTab("scanner")}
-                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer ${
+                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
                             activeTab === "scanner"
                                 ? "text-indigo-400 border-indigo-500 bg-indigo-500/10"
                                 : "text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/50"
@@ -98,7 +255,7 @@ export const DashboardPage: React.FC = () => {
 
                     <button
                         onClick={() => setTab("chat")}
-                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer ${
+                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
                             activeTab === "chat"
                                 ? "text-purple-400 border-purple-500 bg-purple-500/10"
                                 : "text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/50"
@@ -109,8 +266,32 @@ export const DashboardPage: React.FC = () => {
                     </button>
 
                     <button
+                        onClick={() => setTab("interviews")}
+                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
+                            activeTab === "interviews"
+                                ? "text-emerald-400 border-emerald-500 bg-emerald-500/10"
+                                : "text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/50"
+                        }`}
+                    >
+                        <BrainCircuit className="w-4 h-4" />
+                        AI Interview Results ({interviews.length})
+                    </button>
+
+                    <button
+                        onClick={() => setTab("builder")}
+                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
+                            activeTab === "builder"
+                                ? "text-amber-400 border-amber-500 bg-amber-500/10"
+                                : "text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/50"
+                        }`}
+                    >
+                        <Sparkles className="w-4 h-4" />
+                        AI Built Resumes ({builderResumes.length})
+                    </button>
+
+                    <button
                         onClick={() => setTab("history")}
-                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer ${
+                        className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
                             activeTab === "history"
                                 ? "text-pink-400 border-pink-500 bg-pink-500/10"
                                 : "text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/50"
@@ -121,158 +302,438 @@ export const DashboardPage: React.FC = () => {
                     </button>
                 </div>
 
-                {/* Tab Content */}
-                {resumes.length === 0 && !showUploader ? (
-                    <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-center max-w-lg mx-auto">
-                        <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-4">
-                            <FileText className="w-7 h-7" />
-                        </div>
-                        <h3 className="text-lg font-bold text-white mb-1">No Resumes Uploaded Yet</h3>
-                        <p className="text-xs text-slate-400 mb-6">
-                            Upload your resume PDF to scan its ATS score and start chatting with the AI Career Coach.
-                        </p>
-                        <button
-                            onClick={() => setShowUploader(true)}
-                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
-                        >
-                            <Sparkles className="w-4 h-4" />
-                            Upload Resume Now
-                        </button>
-                    </div>
-                ) : (
-                    <>
-                        {/* Tab 1: ATS Scanner & Analytics */}
-                        {activeTab === "scanner" && (
-                            <div>
-                                {activeResume && (
-                                    <div className="space-y-6">
-                                        {/* Active Resume Sub-header */}
-                                        <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300">
-                                            <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-indigo-400" />
-                                                <span>Active File:</span>
-                                                <span className="font-bold text-white">{activeResume.fileName}</span>
-                                                <span className="text-slate-500">
-                                                    ({(activeResume.fileSize / 1024).toFixed(1)} KB • {activeResume.totalChunks} Chunks)
-                                                </span>
-                                            </div>
-
-                                            {resumes.length > 1 && (
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-slate-400">Switch resume:</span>
-                                                    <select
-                                                        value={activeResume._id}
-                                                        onChange={(e) => {
-                                                            const chosen = resumes.find((r) => r._id === e.target.value);
-                                                            if (chosen) setActiveResume(chosen);
-                                                        }}
-                                                        className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                                                    >
-                                                        {resumes.map((r) => (
-                                                            <option key={r._id} value={r._id}>
-                                                                {r.fileName}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            )}
+                {/* Tab 1: ATS Scanner & Analytics */}
+                {activeTab === "scanner" && (
+                    <div>
+                        {resumes.length === 0 && !showUploader ? (
+                            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-center max-w-lg mx-auto">
+                                <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-4">
+                                    <FileText className="w-7 h-7" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white mb-1">No Resumes Uploaded Yet</h3>
+                                <p className="text-xs text-slate-400 mb-6">
+                                    Upload your resume PDF to scan its ATS score, check keyword gaps, and receive career recommendations.
+                                </p>
+                                <button
+                                    onClick={() => setShowUploader(true)}
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+                                >
+                                    <Sparkles className="w-4 h-4" />
+                                    Upload Resume Now
+                                </button>
+                            </div>
+                        ) : (
+                            activeResume && (
+                                <div className="space-y-6">
+                                    {/* Active Resume Sub-header */}
+                                    <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300">
+                                        <div className="flex items-center gap-2">
+                                            <FileText className="w-4 h-4 text-indigo-400" />
+                                            <span>Active File:</span>
+                                            <span className="font-bold text-white">{activeResume.fileName}</span>
+                                            <span className="text-slate-500">
+                                                ({(activeResume.fileSize / 1024).toFixed(1)} KB • {activeResume.totalChunks} Chunks)
+                                            </span>
                                         </div>
 
-                                        <ResumeAnalyticsCard resume={activeResume} />
+                                        {resumes.length > 1 && (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-slate-400">Switch resume:</span>
+                                                <select
+                                                    value={activeResume._id}
+                                                    onChange={(e) => {
+                                                        const chosen = resumes.find((r) => r._id === e.target.value);
+                                                        if (chosen) setActiveResume(chosen);
+                                                    }}
+                                                    className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                                                >
+                                                    {resumes.map((r) => (
+                                                        <option key={r._id} value={r._id}>
+                                                            {r.fileName}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        )}
 
-                        {/* Tab 2: AI Career Coach Chat (Vector Embeddings RAG) */}
-                        {activeTab === "chat" && (
+                                    <ResumeAnalyticsCard resume={activeResume} />
+                                </div>
+                            )
+                        )}
+                    </div>
+                )}
+
+                {/* Tab 2: AI Career Coach Chat */}
+                {activeTab === "chat" && (
+                    <div>
+                        <CareerCoachChat />
+                    </div>
+                )}
+
+                {/* Tab 3: AI Interview Results & Scorecards */}
+                {activeTab === "interviews" && (
+                    <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
-                                <CareerCoachChat />
-                            </div>
-                        )}
-
-                        {/* Tab 3: Resume History Vault */}
-                        {activeTab === "history" && (
-                            <div className="space-y-4">
-                                <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-                                    <FolderKanban className="w-5 h-5 text-indigo-400" />
-                                    Your Uploaded Resumes
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <BrainCircuit className="w-5 h-5 text-emerald-400" />
+                                    AI Technical Interview Scorecards
                                 </h3>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    All saved results from your 10-round MCQ technical assessments, scores, percentages, and solutions.
+                                </p>
+                            </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {resumes.map((r) => (
+                            <Link
+                                to="/interview"
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-600/20 transition-all cursor-pointer self-start sm:self-auto"
+                            >
+                                <Plus className="w-4 h-4" />
+                                New 5-Min Interview
+                            </Link>
+                        </div>
+
+                        {isFetchingInterviews && interviews.length === 0 ? (
+                            <div className="text-center py-12 text-slate-400 text-sm">
+                                Loading interview history...
+                            </div>
+                        ) : interviews.length === 0 ? (
+                            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-center max-w-lg mx-auto">
+                                <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto mb-4">
+                                    <Award className="w-7 h-7" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white mb-1">No AI Interviews Taken Yet</h3>
+                                <p className="text-xs text-slate-400 mb-6">
+                                    Select your technical field (Frontend, Backend, Full Stack, AI/Data), answer 10 rounds of MCQ questions within 5 minutes, and track your percentage score.
+                                </p>
+                                <Link
+                                    to="/interview"
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                                >
+                                    <BrainCircuit className="w-4 h-4" />
+                                    Start 5-Minute AI Interview
+                                </Link>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                                {interviews.map((item) => {
+                                    const percentage =
+                                        item.percentage ??
+                                        Math.round(((item.score ?? 0) / (item.totalQuestions || 10)) * 100);
+                                    const isPassed = item.passed ?? percentage >= 60;
+
+                                    return (
                                         <div
-                                            key={r._id}
-                                            className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
-                                                activeResume?._id === r._id
-                                                    ? "bg-slate-900 border-indigo-500/80 shadow-lg shadow-indigo-500/10"
-                                                    : "bg-slate-900/60 border-slate-800/80 hover:border-slate-700"
-                                            }`}
+                                            key={item._id}
+                                            className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800/90 hover:border-slate-700 transition-all flex flex-col justify-between group shadow-sm hover:shadow-lg hover:shadow-emerald-500/5"
                                         >
                                             <div>
-                                                <div className="flex items-start justify-between gap-2 mb-3">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs">
-                                                            <FileText className="w-5 h-5" />
-                                                        </div>
-                                                        <div className="overflow-hidden">
-                                                            <h4 className="text-sm font-bold text-white truncate" title={r.fileName}>
-                                                                {r.fileName}
-                                                            </h4>
-                                                            <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                {/* Header: Field & Status Badge */}
+                                                <div className="flex items-start justify-between gap-3 mb-3">
+                                                    <div className="overflow-hidden">
+                                                        <h4 className="text-sm font-bold text-white truncate group-hover:text-emerald-300 transition-colors" title={item.field}>
+                                                            {item.field}
+                                                        </h4>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-medium">
+                                                                {item.difficulty || "Mid-Level"}
+                                                            </span>
+                                                            <span className="text-[11px] text-slate-500 flex items-center gap-1">
                                                                 <Calendar className="w-3 h-3" />
-                                                                {new Date(r.createdAt).toLocaleDateString()}
+                                                                {new Date(item.createdAt).toLocaleDateString()}
                                                             </span>
                                                         </div>
                                                     </div>
 
-                                                    {activeResume?._id === r._id && (
-                                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                                                            <CheckCircle2 className="w-3 h-3" />
-                                                            Active
-                                                        </span>
-                                                    )}
+                                                    <span
+                                                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex items-center gap-1 flex-shrink-0 ${
+                                                            isPassed
+                                                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                                                : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                                        }`}
+                                                    >
+                                                        {isPassed ? (
+                                                            <>
+                                                                <CheckCircle2 className="w-3 h-3" />
+                                                                Passed
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <XCircle className="w-3 h-3" />
+                                                                Needs Work
+                                                            </>
+                                                        )}
+                                                    </span>
                                                 </div>
 
-                                                {/* Score chip */}
-                                                <div className="my-3 flex items-center gap-2">
-                                                    <span className="text-xs text-slate-400">ATS Score:</span>
-                                                    <span className="text-xs font-extrabold text-indigo-400">
-                                                        {r.analysis?.atsScore || "--"}/100
-                                                    </span>
-                                                    {r.analysis?.atsGrade && (
-                                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                                                            {r.analysis.atsGrade}
+                                                {/* Big Score and Percentage Metrics */}
+                                                <div className="my-4 p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+                                                    <div className="flex items-baseline justify-between mb-1.5">
+                                                        <div className="flex items-baseline gap-1.5">
+                                                            <span className="text-2xl font-black text-white">
+                                                                {item.score ?? 0}
+                                                            </span>
+                                                            <span className="text-xs font-semibold text-slate-500">
+                                                                / {item.totalQuestions || 10} Score
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-1">
+                                                            <span
+                                                                className={`text-xl font-extrabold ${
+                                                                    isPassed ? "text-emerald-400" : "text-amber-400"
+                                                                }`}
+                                                            >
+                                                                {percentage}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Visual Percentage Progress Bar */}
+                                                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full transition-all duration-500 ${
+                                                                isPassed
+                                                                    ? "bg-gradient-to-r from-emerald-500 to-teal-400"
+                                                                    : "bg-gradient-to-r from-amber-500 to-rose-400"
+                                                            }`}
+                                                            style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }}
+                                                        />
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2.5 pt-2 border-t border-slate-800/60">
+                                                        <span className="flex items-center gap-1">
+                                                            <Clock className="w-3 h-3 text-slate-500" />
+                                                            Time: {formatTime(item.timeSpentSeconds)}
                                                         </span>
-                                                    )}
+                                                        <span className="capitalize text-slate-400">
+                                                            {item.status === "timed-out" ? "Auto-Submitted" : "Submitted"}
+                                                        </span>
+                                                    </div>
                                                 </div>
+
+                                                {/* AI Feedback Preview */}
+                                                {item.feedback && (
+                                                    <p className="text-[11px] text-slate-400 line-clamp-2 italic mb-2">
+                                                        "{item.feedback}"
+                                                    </p>
+                                                )}
                                             </div>
 
-                                            <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                                                <button
-                                                    onClick={() => {
-                                                        setActiveResume(r);
-                                                        setTab("scanner");
-                                                    }}
-                                                    className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                                            {/* Action Link */}
+                                            <div className="mt-3 pt-3 border-t border-slate-800/80">
+                                                <Link
+                                                    to={`/interview/result/${item._id}`}
+                                                    className="flex items-center justify-between text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
                                                 >
-                                                    View ATS Report →
-                                                </button>
-
-                                                <button
-                                                    onClick={() => deleteResume(r._id)}
-                                                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                                                    title="Delete Resume"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
+                                                    <span>View Solutions & Scorecard</span>
+                                                    <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                                                </Link>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
+                                    );
+                                })}
                             </div>
                         )}
-                    </>
+                    </div>
+                )}
+
+                {/* Tab: AI Built Resumes */}
+                {activeTab === "builder" && (
+                    <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Sparkles className="w-5 h-5 text-amber-400" />
+                                    AI Built & Tailored Resumes
+                                </h3>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Craft, edit with BlockNote Notion-style editor, download PDF, and analyze ATS scores.
+                                </p>
+                            </div>
+
+                            <Link
+                                to="/builder"
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-md shadow-purple-600/20 transition-all cursor-pointer self-start sm:self-auto"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Create / Edit in Builder
+                            </Link>
+                        </div>
+
+                        {builderResumes.length === 0 ? (
+                            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-center max-w-lg mx-auto">
+                                <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center mx-auto mb-4">
+                                    <Sparkles className="w-7 h-7" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white mb-1">No AI Resumes Built Yet</h3>
+                                <p className="text-xs text-slate-400 mb-6">
+                                    Generate an ATS-optimized resume using AI based on your old uploaded resume, customize with our BlockNote editor, and download as PDF.
+                                </p>
+                                <Link
+                                    to="/builder"
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+                                >
+                                    <Sparkles className="w-4 h-4 text-amber-300" />
+                                    Launch AI Resume Builder
+                                </Link>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                                {builderResumes.map((br) => (
+                                    <div
+                                        key={br._id}
+                                        className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800/90 hover:border-slate-700 transition-all flex flex-col justify-between group shadow-sm hover:shadow-lg hover:shadow-indigo-500/5"
+                                    >
+                                        <div>
+                                            <div className="flex items-start justify-between gap-3 mb-2">
+                                                <div className="overflow-hidden">
+                                                    <h4 className="text-sm font-bold text-white truncate group-hover:text-indigo-300 transition-colors" title={br.title}>
+                                                        {br.title}
+                                                    </h4>
+                                                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                                                        {br.targetRole}
+                                                    </span>
+                                                </div>
+
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-300 capitalize flex-shrink-0">
+                                                    {br.status}
+                                                </span>
+                                            </div>
+
+                                            {/* ATS Score card if analyzed */}
+                                            {br.atsAnalysis?.atsScore !== undefined ? (
+                                                <div className="my-3 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
+                                                    <div className="flex items-center justify-between text-xs mb-1">
+                                                        <span className="text-slate-400">ATS Score:</span>
+                                                        <span className="font-bold text-emerald-400">
+                                                            {br.atsAnalysis.atsScore}/100 ({br.atsAnalysis.atsGrade})
+                                                        </span>
+                                                    </div>
+                                                    <div className="w-full bg-slate-800 rounded-full h-1.5">
+                                                        <div
+                                                            className="bg-emerald-500 h-1.5 rounded-full"
+                                                            style={{ width: `${br.atsAnalysis.atsScore}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="my-3 p-3 rounded-xl bg-slate-950/40 border border-slate-800/50 text-[11px] text-slate-500">
+                                                    Draft ready • Open builder to analyze ATS score
+                                                </div>
+                                            )}
+
+                                            <p className="text-[11px] text-slate-400 line-clamp-2 mt-2 font-mono">
+                                                {br.content.slice(0, 120)}...
+                                            </p>
+                                        </div>
+
+                                        <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                                            <Link
+                                                to={`/builder?id=${br._id}`}
+                                                className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                                            >
+                                                <span>Edit in BlockNote</span>
+                                                <ArrowRight className="w-3.5 h-3.5" />
+                                            </Link>
+                                            <span className="text-[10px] text-slate-500">
+                                                {new Date(br.updatedAt).toLocaleDateString()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Tab 5: Resume History Vault */}
+                {activeTab === "history" && (
+                    <div className="space-y-4">
+                        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                            <FolderKanban className="w-5 h-5 text-indigo-400" />
+                            Your Uploaded Resumes
+                        </h3>
+
+                        {resumes.length === 0 ? (
+                            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-10 text-center text-slate-400">
+                                No resumes uploaded yet.
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {resumes.map((r) => (
+                                    <div
+                                        key={r._id}
+                                        className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                                            activeResume?._id === r._id
+                                                ? "bg-slate-900 border-indigo-500/80 shadow-lg shadow-indigo-500/10"
+                                                : "bg-slate-900/60 border-slate-800/80 hover:border-slate-700"
+                                        }`}
+                                    >
+                                        <div>
+                                            <div className="flex items-start justify-between gap-2 mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs">
+                                                        <FileText className="w-5 h-5" />
+                                                    </div>
+                                                    <div className="overflow-hidden">
+                                                        <h4 className="text-sm font-bold text-white truncate" title={r.fileName}>
+                                                            {r.fileName}
+                                                        </h4>
+                                                        <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                            <Calendar className="w-3 h-3" />
+                                                            {new Date(r.createdAt).toLocaleDateString()}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {activeResume?._id === r._id && (
+                                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                                                        <CheckCircle2 className="w-3 h-3" />
+                                                        Active
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {/* Score chip */}
+                                            <div className="my-3 flex items-center gap-2">
+                                                <span className="text-xs text-slate-400">ATS Score:</span>
+                                                <span className="text-xs font-extrabold text-indigo-400">
+                                                    {r.analysis?.atsScore !== undefined ? `${r.analysis.atsScore}/100` : "--/100"}
+                                                </span>
+                                                {r.analysis?.atsGrade && (
+                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                                                        {r.analysis.atsGrade}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    setActiveResume(r);
+                                                    setTab("scanner");
+                                                }}
+                                                className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                                            >
+                                                View ATS Report →
+                                            </button>
+
+                                            <button
+                                                onClick={() => deleteResume(r._id)}
+                                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                                title="Delete Resume"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 )}
             </main>
         </div>

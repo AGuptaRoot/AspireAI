@@ -26,6 +26,50 @@ const UserSchema = new Schema({
         required: [true, "Profession is required"],
         trim: true,
     },
+    fullName: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    phone: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    location: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    bio: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    targetRole: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    linkedinUrl: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    githubUrl: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    portfolioUrl: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    skills: {
+        type: [String],
+        default: [],
+    },
     isVerified: {
         type: Boolean,
         default: false,

@@ -59,5 +59,33 @@ export const resendOtpSchema = z.object({
     }),
 });
 
+export const forgotPasswordSchema = z.object({
+    body: z.object({
+        email: z
+            .string({ message: "Email is required" })
+            .email("Please provide a valid email address")
+            .toLowerCase()
+            .trim(),
+    }),
+});
+
+export const resetPasswordSchema = z.object({
+    body: z.object({
+        email: z
+            .string({ message: "Email is required" })
+            .email("Please provide a valid email address")
+            .toLowerCase()
+            .trim(),
+        otp: z.union([
+            z.string().min(4, "OTP must be at least 4 digits").max(6, "OTP must be at most 6 digits"),
+            z.number().int().positive("OTP must be a positive number"),
+        ]),
+        newPassword: z
+            .string({ message: "New password is required" })
+            .min(6, "Password must be at least 6 characters long"),
+    }),
+});
+
 // Backward compatibility alias
 export const usersValidSchema = registerSchema;
+

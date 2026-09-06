@@ -6,6 +6,8 @@ import dbConnection from "./config/mongodb_connect.js";
 import authRouter from "./routes/auth.routes.js";
 import userRouter from "./routes/users.routes.js";
 import resumeRouter from "./routes/resume.routes.js";
+import interviewRouter from "./routes/interview.routes.js";
+import builderRouter from "./routes/builder.routes.js";
 const app = express();
 // 1. Initialize MongoDB Connection
 dbConnection();
@@ -46,6 +48,8 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/users", userRouter);
 app.use("/api/resume", resumeRouter);
+app.use("/api/interview", interviewRouter);
+app.use("/api/builder", builderRouter);
 // 5. 404 Handler
 app.use((req, res) => {
     res.status(404).json({
