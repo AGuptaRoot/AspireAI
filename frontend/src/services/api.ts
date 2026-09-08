@@ -172,6 +172,13 @@ export const api = {
                 body: JSON.stringify(payload),
             }),
 
+        chatStream: (
+            payload: { query: string; resumeId?: string },
+            onChunk: (chunk: string, meta?: any) => void,
+            onDone?: (data?: any) => void,
+            onError?: (err: any) => void
+        ) => streamSse("/api/resume/chat/stream", payload, onChunk, onDone, onError),
+
         getChatHistory: (resumeId?: string) =>
             request<ApiResponse>(resumeId ? `/api/resume/${resumeId}/chat-history` : "/api/resume/chat-history"),
 
@@ -205,6 +212,12 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(payload || {}),
             }),
+
+        generateStream: (
+            payload: { resumeId?: string; targetRole?: string; title?: string; customInstructions?: string },
+            onChunk: (chunk: string) => void,
+            onDone?: (data?: any) => void
+        ) => streamSse("/api/builder/generate/stream", payload, onChunk, onDone),
 
         create: (payload: { title: string; targetRole: string; content: string; blocks?: any[] }) =>
             request<ApiResponse>("/api/builder", {
@@ -244,6 +257,100 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(payload),
             }),
+
+        aiWriteStream: (
+            payload: {
+                prompt?: string;
+                selectedText?: string;
+                contextText?: string;
+                targetRole?: string;
+                action?: "improve" | "xyz" | "concise" | "roleAlign" | "grammar" | "custom";
+            },
+            onChunk: (chunk: string) => void,
+            onDone?: (data?: any) => void
+        ) => streamSse("/api/builder/ai-write/stream", payload, onChunk, onDone),
     },
 };
+
+/**
+ * Generic SSE stream consumer for real-time incremental rendering
+ */
+export async function streamSse(
+    endpoint: string,
+    payload: any,
+    onChunk: (chunk: string, meta?: any) => void,
+    onDone?: (data?: any) => void,
+    onError?: (err: any) => void
+): Promise<void> {
+    const url = `${BACKEND_URL}${endpoint}`;
+    const token = getAuthToken();
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok || !response.body) {
+            let errorMsg = `Streaming request failed with status ${response.status}`;
+            try {
+                const errData = await response.json();
+                if (errData?.message) errorMsg = errData.message;
+            } catch {
+                // Ignore parse errors
+            }
+            throw new Error(errorMsg);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("data: ")) {
+                    try {
+                        const parsed = JSON.parse(trimmed.slice(6));
+                        if (parsed.error) {
+                            throw new Error(parsed.error);
+                        }
+                        if (parsed.meta) {
+                            onChunk("", parsed.meta);
+                        }
+                        if (parsed.chunk) {
+                            onChunk(parsed.chunk);
+                        }
+                        if (parsed.done) {
+                            onDone?.(parsed);
+                        }
+                    } catch (e: any) {
+                        if (e.message && !e.message.includes("JSON")) {
+                            throw e;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (err: any) {
+        if (onError) onError(err);
+        else {
+            console.error("SSE stream error:", err);
+            throw err;
+        }
+    }
+}
 

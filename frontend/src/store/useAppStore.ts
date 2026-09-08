@@ -60,7 +60,10 @@ interface AppState {
 
     // Builder Actions
     fetchBuilderResumes: () => Promise<void>;
-    generateAiResume: (payload?: { resumeId?: string; targetRole?: string; title?: string; customInstructions?: string }) => Promise<BuilderResume | null>;
+    generateAiResume: (
+        payload?: { resumeId?: string; targetRole?: string; title?: string; customInstructions?: string },
+        onChunk?: (chunk: string) => void
+    ) => Promise<BuilderResume | null>;
     createBuilderResume: (payload: { title: string; targetRole: string; content: string; blocks?: any[] }) => Promise<BuilderResume | null>;
     updateBuilderResume: (id: string, payload: { title?: string; targetRole?: string; content?: string; blocks?: any[] }) => Promise<boolean>;
     deleteBuilderResume: (id: string) => Promise<boolean>;
@@ -343,37 +346,114 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         const activeId = resumeId || get().activeResume?._id;
 
-        // Optimistically add user message
+        // Optimistically add user message and prepare streaming assistant message
         const optimisticUserMsg: ChatMessage = {
             role: "user",
             content: trimmed,
             createdAt: new Date().toISOString(),
         };
 
+        const initialAssistantMsg: ChatMessage = {
+            role: "assistant",
+            content: "",
+            sources: [],
+            createdAt: new Date().toISOString(),
+        };
+
         set((state) => ({
-            chatMessages: [...state.chatMessages, optimisticUserMsg],
+            chatMessages: [...state.chatMessages, optimisticUserMsg, initialAssistantMsg],
             isChatLoading: true,
             chatError: null,
         }));
 
+        let streamedText = "";
+        let metaSources: string[] = [];
+
         try {
-            const res = await api.resume.chat({ query: trimmed, resumeId: activeId });
-            if (res.success && res.response) {
-                const aiMsg: ChatMessage = {
-                    role: "assistant",
-                    content: res.response,
-                    sources: res.sources,
-                    createdAt: new Date().toISOString(),
-                };
-                set((state) => ({
-                    chatMessages: [...state.chatMessages, aiMsg],
-                    isChatLoading: false,
-                }));
-            } else {
-                set({ isChatLoading: false, chatError: "Failed to get AI response" });
+            await api.resume.chatStream(
+                { query: trimmed, resumeId: activeId },
+                (chunk, meta) => {
+                    if (meta && meta.sources) {
+                        metaSources = meta.sources;
+                    }
+                    if (chunk) {
+                        streamedText += chunk;
+                        set((state) => {
+                            const msgs = [...state.chatMessages];
+                            const last = msgs[msgs.length - 1];
+                            if (last && last.role === "assistant") {
+                                last.content = streamedText;
+                                if (metaSources.length > 0) last.sources = metaSources;
+                            }
+                            return { chatMessages: msgs, isChatLoading: false };
+                        });
+                    }
+                },
+                () => {
+                    set({ isChatLoading: false });
+                }
+            );
+
+            // If streaming yielded no content, fallback to standard post
+            if (!streamedText) {
+                const res = await api.resume.chat({ query: trimmed, resumeId: activeId });
+                if (res.success && res.response) {
+                    set((state) => {
+                        const msgs = [...state.chatMessages];
+                        const last = msgs[msgs.length - 1];
+                        if (last && last.role === "assistant") {
+                            last.content = res.response || "";
+                            last.sources = res.sources;
+                        }
+                        return { chatMessages: msgs, isChatLoading: false };
+                    });
+                } else {
+                    set((state) => {
+                        const msgs = [...state.chatMessages];
+                        const last = msgs[msgs.length - 1];
+                        if (last && last.role === "assistant" && !last.content) {
+                            msgs.pop();
+                        }
+                        return {
+                            chatMessages: msgs,
+                            isChatLoading: false,
+                            chatError: res.message || "Failed to get AI career response. Please try again.",
+                        };
+                    });
+                }
             }
         } catch (err: any) {
-            set({ isChatLoading: false, chatError: err.message || "AI Career Coach error" });
+            if (!streamedText) {
+                try {
+                    const res = await api.resume.chat({ query: trimmed, resumeId: activeId });
+                    if (res.success && res.response) {
+                        set((state) => {
+                            const msgs = [...state.chatMessages];
+                            const last = msgs[msgs.length - 1];
+                            if (last && last.role === "assistant") {
+                                last.content = res.response || "";
+                                last.sources = res.sources;
+                            }
+                            return { chatMessages: msgs, isChatLoading: false };
+                        });
+                        return;
+                    }
+                } catch {
+                    // Fallthrough to error
+                }
+            }
+            set((state) => {
+                const msgs = [...state.chatMessages];
+                const last = msgs[msgs.length - 1];
+                if (last && last.role === "assistant" && !last.content) {
+                    msgs.pop();
+                }
+                return {
+                    chatMessages: msgs,
+                    isChatLoading: false,
+                    chatError: err?.message || "AI Career Coach encountered an error. Please try again.",
+                };
+            });
         }
     },
 
@@ -421,9 +501,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
     },
 
-    generateAiResume: async (payload) => {
+    generateAiResume: async (payload, onChunk) => {
         set({ isBuilderLoading: true });
         try {
+            let streamedResume: BuilderResume | null = null;
+            await api.builder.generateStream(
+                payload || {},
+                (chunk) => {
+                    if (onChunk) onChunk(chunk);
+                },
+                (doneData) => {
+                    if (doneData?.resume) {
+                        streamedResume = doneData.resume;
+                    }
+                }
+            );
+
+            if (streamedResume) {
+                set((state) => ({
+                    builderResumes: [streamedResume!, ...state.builderResumes],
+                    activeBuilderResume: streamedResume,
+                    isBuilderLoading: false,
+                }));
+                return streamedResume;
+            }
+
+            // Fallback to non-streaming endpoint
             const res = await api.builder.generate(payload);
             if (res.success && res.resume) {
                 set((state) => ({

@@ -140,21 +140,33 @@ export const ResumeBuilderPage: React.FC = () => {
         }
     };
 
-    // Trigger AI Generation
+    // Trigger AI Generation with live token streaming
     const handleGenerateAiResume = async (e: React.FormEvent) => {
         e.preventDefault();
         const role = aiTargetRole.trim() || targetRole || "Full Stack Developer";
         const title = aiResumeTitle.trim() || `${role} Resume (AI Generated)`;
 
-        const generated = await generateAiResume({
-            resumeId: selectedSourceResumeId || undefined,
-            targetRole: role,
-            title,
-            customInstructions: aiInstructions.trim() || undefined,
-        });
+        setShowAiModal(false);
+        setResumeTitle(title);
+        setTargetRole(role);
+        setEditorContent("");
+        setSaveStatus("saving");
+
+        let accumulated = "";
+        const generated = await generateAiResume(
+            {
+                resumeId: selectedSourceResumeId || undefined,
+                targetRole: role,
+                title,
+                customInstructions: aiInstructions.trim() || undefined,
+            },
+            (chunk) => {
+                accumulated += chunk;
+                setEditorContent(accumulated);
+            }
+        );
 
         if (generated) {
-            setShowAiModal(false);
             setResumeTitle(generated.title);
             setTargetRole(generated.targetRole);
             setEditorContent(generated.content);

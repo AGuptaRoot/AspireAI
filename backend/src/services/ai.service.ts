@@ -1,23 +1,92 @@
 import { ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
 import { Document } from "@langchain/core/documents";
 import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
+import { jsonrepair } from "jsonrepair";
 import { config } from "../config/config.js";
 import { IResumeAnalysis } from "../models/resume.models.js";
 import { IChatMessage } from "../models/chat.models.js";
 
 /**
- * Initialize Gemini Chat Model
+ * Fast local JSON parsing with jsonrepair.
+ * Eliminates secondary LLM review/auditor passes by repairing
+ * markdown fences, unescaped quotes, trailing commas, and truncated objects locally in <1ms.
  */
-export const getChatModel = (temperature: number = 0.4) => {
+export function parseJsonSafely<T = any>(rawText: string, fallback?: T): T {
+    let text = (rawText || "").trim();
+
+    // Strip markdown code fences if present
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    // Extract JSON substring if conversational preamble is present
+    const firstBrace = text.indexOf("{");
+    const firstBracket = text.indexOf("[");
+    let startIdx = -1;
+    let endIdx = -1;
+
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+        startIdx = firstBrace;
+        endIdx = text.lastIndexOf("}");
+    } else if (firstBracket !== -1) {
+        startIdx = firstBracket;
+        endIdx = text.lastIndexOf("]");
+    }
+
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        text = text.substring(startIdx, endIdx + 1);
+    }
+
+    // Try standard JSON.parse first (fastest path)
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        // Instant local repair: fixes malformed JSON without secondary LLM pass
+        try {
+            const repaired = jsonrepair(text);
+            return JSON.parse(repaired) as T;
+        } catch (repairErr: any) {
+            if (fallback !== undefined) return fallback;
+            throw new Error(`Failed to parse JSON even with jsonrepair: ${repairErr.message}`);
+        }
+    }
+}
+
+/**
+ * Initialize Gemini Chat Model with ultra-low-latency defaults
+ * Default Model: gemini-2.0-flash (or OpenRouter Groq llama-3.3-70b-instruct)
+ * Temperature: 0.2 (0.2-0.4 for deterministic, rapid output)
+ * MaxOutputTokens: 2,000 - 3,500 (tightly capped to stop runaway tokens)
+ * Structured Output: responseMimeType: "application/json"
+ */
+export const getChatModel = (
+    temperature: number = config.Gemini.Temperature ?? 0.2,
+    jsonMode: boolean = false,
+    maxTokens: number = config.Gemini.MaxTokens ?? 3000
+) => {
     const apiKey = config.Gemini.ApiKey;
     if (!apiKey || apiKey === "your_gemini_api_key_here") {
         return null;
     }
     return new ChatGoogleGenerativeAI({
-        model: config.Gemini.Model || "gemini-3.6-flash",
+        model: config.Gemini.Model || "gemini-2.0-flash",
         apiKey,
         temperature,
+        maxOutputTokens: maxTokens,
+        ...(jsonMode ? { responseMimeType: "application/json" } : {}),
     });
+};
+
+/**
+ * Optimization #2: Bypass secondary review / auditor model completely
+ * Single-pass generation: NO secondary LLM passes (e.g. openrouterReviewModel).
+ */
+export const openrouterReviewModel = null;
+
+export const generateReviewedAnalysisWithFallback = async (
+    rawText: string,
+    fileName: string = "Resume.pdf"
+): Promise<IResumeAnalysis> => {
+    // Single LLM pass with fast local jsonrepair: skips secondary review passes
+    return analyzeResumeWithAi(rawText, fileName);
 };
 
 /**
@@ -35,13 +104,14 @@ export const getEmbeddingModel = () => {
 };
 
 /**
- * Perform comprehensive ATS and career analysis on resume text
+ * Perform comprehensive ATS and career analysis on resume text (Single-Pass Generation)
  */
 export const analyzeResumeWithAi = async (
     rawText: string,
     fileName: string = "Resume.pdf"
 ): Promise<IResumeAnalysis> => {
-    const model = getChatModel(0.2);
+    // Single-pass: deterministic temperature (0.2), strict JSON output, capped at 2500 tokens
+    const model = getChatModel(0.2, true, 2500);
 
     if (model) {
         try {
@@ -105,12 +175,10 @@ Please evaluate the resume and output JSON strictly adhering to this schema:
 `;
 
             const response = await model.invoke(prompt);
-            let responseText = typeof response.content === "string" ? response.content : JSON.stringify(response.content);
+            const responseText = typeof response.content === "string" ? response.content : JSON.stringify(response.content);
 
-            // Clean up any markdown code block fences if present
-            responseText = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
-
-            const parsedJson: IResumeAnalysis = JSON.parse(responseText);
+            // Single-pass local parsing with jsonrepair: NO second LLM pass or auditor needed
+            const parsedJson: IResumeAnalysis = parseJsonSafely(responseText);
             parsedJson.analyzedAt = new Date();
             return parsedJson;
         } catch (error: any) {
@@ -293,19 +361,18 @@ export const queryResumeVectorStore = async (
     if (chatModel) {
         try {
             const prompt = `
-You are a helpful career assistant.
+You are an expert career coach and technical interview mentor.
 
-Context:
-${result || "No specific resume text retrieved."}
+${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide general career guidance, interview preparation strategies, or actionable resume advice based on your expertise."}
 
 ${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
 ${query}
 
 Instructions:
-- Answer based only on context
-- If not found, say "Not available in resume"
-- Give short and clear answer (max 100 words)
-- And you can give me career advice
+- If resume context is present, ground your answer in the candidate's actual projects, skills, and background.
+- If a specific resume attribute or detail is requested but not in the context, mention that it is not in the uploaded resume.
+- For interview questions, role suitability, or general career queries, provide structured, actionable, and encouraging advice.
+- Keep the tone professional, concise, and clear (max 200 words).
 `;
 
             const aiResponse = await chatModel.invoke(prompt);
@@ -367,13 +434,11 @@ Here are the best job roles to target:
 **Advice**: Use the STAR method (Situation, Task, Action, Result) when answering behavioral and project questions!`;
     }
 
-    return `Based on your resume context:
-"${context.slice(0, 200)}..."
-
-You have a strong technical foundation. To take your career to the next level:
+    const contextSnippet = context ? `\n\nContext excerpt:\n"${context.slice(0, 200)}..."` : "";
+    return `You have a strong technical foundation. To take your career to the next level:
 • Highlight real-world impact and business results on your projects.
 • Build and deploy full-scale AI-powered applications to stand out to modern engineering teams.
-• Keep your GitHub and portfolio updated with live demo links!
+• Keep your GitHub and portfolio updated with live demo links!${contextSnippet}
 
 Feel free to ask for specific advice on interviews, project ideas, or resume bullet improvements.`;
 }
@@ -394,7 +459,8 @@ export const generateMcqQuestionsForField = async (
     difficulty: "Junior" | "Mid-Level" | "Senior" = "Mid-Level",
     resumeContext: string = ""
 ): Promise<GeneratedMcqQuestion[]> => {
-    const chatModel = getChatModel(0.3);
+    // Single-pass: deterministic temperature (0.2), strict JSON mode, capped at 2200 tokens
+    const chatModel = getChatModel(0.2, true, 2200);
 
     if (chatModel) {
         try {
@@ -422,13 +488,12 @@ Requirements:
 `;
 
             const aiResponse = await chatModel.invoke(prompt);
-            let responseText = typeof aiResponse.content === "string" 
+            const responseText = typeof aiResponse.content === "string" 
                 ? aiResponse.content 
                 : JSON.stringify(aiResponse.content);
 
-            responseText = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
-
-            const parsed: any[] = JSON.parse(responseText);
+            // Single-pass local parsing with jsonrepair: NO second LLM review pass
+            const parsed = parseJsonSafely<any[]>(responseText, []);
             if (Array.isArray(parsed) && parsed.length >= 8) {
                 return parsed.slice(0, 10).map((item, idx) => ({
                     questionId: idx + 1,
@@ -439,7 +504,7 @@ Requirements:
                 }));
             }
         } catch (error: any) {
-            console.warn("⚠️ AI Question generation encountered an error, using intelligent field bank fallback:", error.message);
+            console.warn("⚠️ AI Question generation error, using intelligent field bank fallback:", error.message);
         }
     }
 
@@ -1054,4 +1119,231 @@ Rewritten text:`;
     }
     return `Engineered high-performance components for ${targetRole || "Software Engineer"}, reducing response latency by 30% across distributed microservices.`;
 };
+
+/**
+ * ============================================================================
+ * SPEED OPTIMIZATION #5: STREAMING RESPONSE (Server-Sent Events / SSE)
+ * Incrementally yields chunks of generated text as tokens arrive from the LLM
+ * ============================================================================
+ */
+
+/**
+ * Stream AI Resume Generation chunk-by-chunk using model.stream
+ */
+export async function* streamResumeWithAi(params: {
+    existingResumeText?: string;
+    targetRole?: string;
+    userName?: string;
+    userEmail?: string;
+    customInstructions?: string;
+}): AsyncGenerator<string, void, unknown> {
+    const {
+        existingResumeText,
+        targetRole = "Full Stack Developer",
+        userName = "Candidate",
+        userEmail = "candidate@example.com",
+        customInstructions = "",
+    } = params;
+
+    const model = getChatModel(0.3, false, 3500);
+
+    const prompt = `
+You are an elite Executive Career Strategist, Technical Recruiter, and ATS Optimization Specialist.
+Your task is to write a comprehensive, highly persuasive, modern ATS-optimized resume in standard Markdown format for:
+
+Target Role: "${targetRole}"
+Candidate Name: "${userName}"
+Candidate Email: "${userEmail}"
+${customInstructions ? `Special Instructions / Custom Focus: "${customInstructions}"` : ""}
+
+${
+    existingResumeText && existingResumeText.trim().length > 50
+        ? `Use and enhance the candidate's existing background, projects, skills, and experience from their previous resume below. Keep factual information consistent while dramatically elevating phrasing, action verbs, and quantifiable impact:
+"""
+${existingResumeText.slice(0, 8000)}
+"""`
+        : `Generate an exemplary, highly detailed, realistic resume profile tailored for a top-tier ${targetRole}. Include industry-standard technical depth and achievements.`
+}
+
+CRITICAL RESUME FORMATTING INSTRUCTIONS:
+1. Output ONLY clean Markdown text. Do NOT wrap in triple backticks (\`\`\`markdown or \`\`\`).
+2. Follow standard professional structure with sections: # Name, Contact line, ## Professional Summary, ## Technical Core Competencies, ## Professional Work Experience, ## Key Engineering Projects, ## Education, ## Certifications & Awards.
+`;
+
+    if (model) {
+        try {
+            const stream = await model.stream(prompt);
+            for await (const chunk of stream) {
+                const text = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
+                yield text;
+            }
+            return;
+        } catch (err: any) {
+            console.warn("Gemini stream error, falling back to simulated streaming:", err.message);
+        }
+    }
+
+    // Fallback streaming simulation
+    const fallbackText = generateFallbackResume(targetRole, userName, userEmail, existingResumeText);
+    const words = fallbackText.split(" ");
+    for (let i = 0; i < words.length; i += 5) {
+        yield words.slice(i, i + 5).join(" ") + (i + 5 < words.length ? " " : "");
+    }
+}
+
+/**
+ * Stream AI Resume Writing Assistant tokens for BlockNote / Editor
+ */
+export async function* streamAssistResumeWritingWithAi(params: {
+    prompt?: string;
+    selectedText?: string;
+    contextText?: string;
+    targetRole?: string;
+    action?: "improve" | "xyz" | "concise" | "roleAlign" | "grammar" | "custom";
+}): AsyncGenerator<string, void, unknown> {
+    const { prompt, selectedText, contextText, targetRole, action = "improve" } = params;
+
+    let instruction = "";
+    switch (action) {
+        case "xyz":
+            instruction = "Rewrite the provided resume bullet point(s) strictly using Google's X-Y-Z formula ('Accomplished [X] as measured by [Y], by doing [Z]'). Include clear quantified metrics, percentage improvements, or dollar/time savings.";
+            break;
+        case "concise":
+            instruction = "Make the text more punchy and concise, removing filler words while preserving key technical skills, metrics, and high-impact action verbs.";
+            break;
+        case "roleAlign":
+            instruction = `Optimize the wording specifically for a competitive candidate applying for a '${targetRole || "Senior Engineer"}' position. Highlight relevant technical competencies and leadership.`;
+            break;
+        case "grammar":
+            instruction = "Correct any grammatical errors, passive voice, or awkward phrasing while maintaining professional resume tone.";
+            break;
+        case "improve":
+        default:
+            instruction = prompt
+                ? `Follow this specific instruction: "${prompt}". Improve the resume text accordingly.`
+                : "Improve this resume bullet or section to sound senior, impactful, and ATS-optimized, starting with powerful action verbs.";
+            break;
+    }
+
+    const model = getChatModel(0.2, false, 1500);
+    if (model) {
+        try {
+            const systemPrompt = `You are an elite Silicon Valley executive resume editor and career strategist.
+Your task is to refine and rewrite resume content to maximize impact, ATS score, and recruiter appeal.
+Rules:
+1. Return ONLY the rewritten text/markdown. Do NOT include pleasantries, quotes, explanations, or introductory text.
+2. Preserve markdown structure (e.g. bullet points '-', headings '#', bolding '**').
+3. Keep accomplishments factual while elevating phrasing and metric impact.`;
+
+            const fullPrompt = `${systemPrompt}
+
+Instruction: ${instruction}
+${targetRole ? `Target Role: ${targetRole}` : ""}
+${contextText ? `Surrounding Resume Context:\n${contextText.slice(0, 1500)}` : ""}
+
+Text to rewrite:
+"""
+${selectedText || prompt || "Experienced engineer developing high-scale systems."}
+"""
+
+Rewritten text:`;
+
+            const stream = await model.stream(fullPrompt);
+            for await (const chunk of stream) {
+                const text = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
+                yield text;
+            }
+            return;
+        } catch (err: any) {
+            console.warn("AI write stream error, falling back to instant heuristic:", err.message);
+        }
+    }
+
+    // Fast fallback
+    const result = await assistResumeWritingWithAi(params);
+    yield result;
+}
+
+/**
+ * Stream Career Assistant Chat Response token-by-token
+ */
+export async function* streamCareerAssistantResponse(
+    chunks: string[],
+    query: string,
+    chatHistory: IChatMessage[] = []
+): AsyncGenerator<{ text?: string; relevantChunks?: string[]; resultText?: string; done?: boolean }, void, unknown> {
+    const embeddings = getEmbeddingModel();
+    const chatModel = getChatModel(0.3, false, 2000);
+
+    let result = "";
+    let relevantChunks: string[] = [];
+
+    // Vector search
+    if (embeddings && chunks.length > 0) {
+        try {
+            const documents = chunks.map((chunk) => new Document({ pageContent: chunk }));
+            const vectorStore = await MemoryVectorStore.fromDocuments(documents, embeddings);
+            const retrieve = vectorStore.asRetriever({ k: Math.min(2, chunks.length) });
+            const resultDocs = await retrieve.invoke(query);
+            relevantChunks = resultDocs.map((item) => item.pageContent);
+            result = relevantChunks.join("\n\n");
+        } catch (error: any) {
+            console.warn("Vector store retrieval warning:", error.message);
+        }
+    }
+
+    if (relevantChunks.length === 0 && chunks.length > 0) {
+        const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+        const scoredChunks = chunks.map((chunk) => {
+            const lower = chunk.toLowerCase();
+            const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
+            return { chunk, score };
+        });
+        scoredChunks.sort((a, b) => b.score - a.score);
+        relevantChunks = scoredChunks.slice(0, 2).map((sc) => sc.chunk);
+        result = relevantChunks.join("\n\n");
+    }
+
+    // Yield initial context metadata
+    yield { relevantChunks, resultText: result };
+
+    const historyText = chatHistory
+        .slice(-4)
+        .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+        .join("\n");
+
+    if (chatModel) {
+        try {
+            const prompt = `
+You are an expert career coach and technical interview mentor.
+
+${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide general career guidance, interview preparation strategies, or actionable resume advice based on your expertise."}
+
+${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
+${query}
+
+Instructions:
+- If resume context is present, ground your answer in the candidate's actual projects, skills, and background.
+- If a specific resume attribute or detail is requested but not in the context, mention that it is not in the uploaded resume.
+- For interview questions, role suitability, or general career queries, provide structured, actionable, and encouraging advice.
+- Keep the tone professional, concise, and clear (max 200 words).
+`;
+
+            const stream = await chatModel.stream(prompt);
+            for await (const chunk of stream) {
+                const text = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
+                yield { text };
+            }
+            yield { done: true };
+            return;
+        } catch (err: any) {
+            console.warn("Chat stream error, falling back to text:", err.message);
+        }
+    }
+
+    // Fallback
+    const fallbackAnswer = generateCareerAssistantResponse(query, result);
+    yield { text: fallbackAnswer, done: true };
+}
+
 

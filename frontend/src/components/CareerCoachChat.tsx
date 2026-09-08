@@ -47,26 +47,19 @@ export const CareerCoachChat: React.FC = () => {
         setInput(prompt);
     };
 
-    const suggestedPrompts = [
-        "What job roles best match my skills and experience?",
-        "How can I improve my project descriptions to be more impactful?",
-        "What typical technical interview questions should I prepare for?",
-        "Which high-paying skills should I learn next to advance my career?",
-    ];
-
-    if (!activeResume) {
-        return (
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-8 text-center backdrop-blur-sm">
-                <div className="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-400 flex items-center justify-center mx-auto mb-3">
-                    <Bot className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold text-white mb-2">Upload a Resume to Start Chatting</h3>
-                <p className="text-sm text-slate-400 max-w-md mx-auto">
-                    The AI Career Coach uses Vector Embeddings to semantically read your resume and give tailored career guidance.
-                </p>
-            </div>
-        );
-    }
+    const suggestedPrompts = activeResume
+        ? [
+              "What job roles best match my skills and experience?",
+              "How can I improve my project descriptions to be more impactful?",
+              "What typical technical interview questions should I prepare for?",
+              "Which high-paying skills should I learn next to advance my career?",
+          ]
+        : [
+              "What are the most in-demand skills for a full-stack engineer in 2025?",
+              "How should I structure my resume bullets using the STAR/XYZ method?",
+              "What typical technical interview questions should I prepare for?",
+              "Can you give me tips for negotiating a tech job offer?",
+          ];
 
     return (
         <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl shadow-xl flex flex-col h-[700px] overflow-hidden backdrop-blur-sm">
@@ -79,20 +72,33 @@ export const CareerCoachChat: React.FC = () => {
                     <div>
                         <h3 className="text-sm font-bold text-white flex items-center gap-2">
                             AI Career Coach & Interview Mentor
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
-                                Vector RAG Active
+                            <span
+                                className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
+                                    activeResume
+                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                        : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                }`}
+                            >
+                                {activeResume ? "Vector RAG Active" : "General Mentor Mode"}
                             </span>
                         </h3>
-                        <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
-                            <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                            Context: <span className="text-slate-200 font-medium">{activeResume.fileName}</span>
-                        </p>
+                        {activeResume ? (
+                            <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                                Context: <span className="text-slate-200 font-medium">{activeResume.fileName}</span>
+                            </p>
+                        ) : (
+                            <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                <span>General Mode • Upload a resume for personalized RAG insights</span>
+                            </p>
+                        )}
                     </div>
                 </div>
 
                 {chatMessages.length > 0 && (
                     <button
-                        onClick={() => clearChatHistory(activeResume._id)}
+                        onClick={() => clearChatHistory(activeResume?._id)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/20 transition-colors cursor-pointer"
                         title="Clear conversation"
                     >
@@ -111,7 +117,9 @@ export const CareerCoachChat: React.FC = () => {
                         </div>
                         <h4 className="text-base font-bold text-white mb-1">Ask Your AI Career Coach</h4>
                         <p className="text-xs text-slate-400 max-w-md mb-6">
-                            I've indexed your resume using semantic embeddings. Ask me about job matches, interview prep, or resume bullet optimizations!
+                            {activeResume
+                                ? "I've indexed your resume using semantic embeddings. Ask me about job matches, interview prep, or resume bullet optimizations!"
+                                : "Ask anything about career strategy, technical interview questions, or resume optimization. Upload a resume anytime for tailored context!"}
                         </p>
 
                         {/* Suggested Prompts */}

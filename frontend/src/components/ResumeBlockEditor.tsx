@@ -69,7 +69,7 @@ export const ResumeBlockEditor: React.FC<ResumeBlockEditorProps> = ({
 
                     // Handle both Promise and synchronous return types across BlockNote versions
                     if (parsed && typeof (parsed as any).then === "function") {
-                        (parsed as Promise<any>).then(updateEditorBlocks).catch((err) => {
+                        ((parsed as unknown) as Promise<any>).then(updateEditorBlocks).catch((err) => {
                             console.error("Failed to parse markdown to BlockNote blocks:", err);
                         });
                     } else if (Array.isArray(parsed) && parsed.length > 0) {

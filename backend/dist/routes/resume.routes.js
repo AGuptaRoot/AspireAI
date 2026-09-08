@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { uploadResume, getUserResumes, getLatestResume, getResumeById, deleteResume, analyzeResume, getResumeAnalytics, chatWithAiCareerAssistant, getChatHistory, clearChatHistory, } from "../controllers/resume.controllers.js";
+import { uploadResume, getUserResumes, getLatestResume, getResumeById, deleteResume, analyzeResume, getResumeAnalytics, chatWithAiCareerAssistant, chatWithAiCareerAssistantStream, getChatHistory, clearChatHistory, } from "../controllers/resume.controllers.js";
 import { authenticateUser } from "../middlewares/auth.middleware.js";
 import { uploadResumeFile } from "../middlewares/upload.middleware.js";
 const router = Router();
@@ -15,6 +15,7 @@ router.get("/latest/analytics", getResumeAnalytics);
 router.get("/chat-history", getChatHistory);
 router.delete("/chat-history", clearChatHistory);
 // 3. AI Chat & Query with Vector Embeddings (RAG)
+router.post("/chat/stream", chatWithAiCareerAssistantStream);
 router.post("/chat", chatWithAiCareerAssistant);
 router.post("/query", chatWithAiCareerAssistant); // Compatible with user's example
 router.post("/:id/chat", chatWithAiCareerAssistant);

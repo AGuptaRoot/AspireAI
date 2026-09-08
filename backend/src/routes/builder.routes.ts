@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
     generateAiResume,
+    generateAiResumeStream,
     createResume,
     getUserResumes,
     getResumeById,
@@ -8,6 +9,7 @@ import {
     deleteResume,
     analyzeBuilderResume,
     aiWriteAssistant,
+    aiWriteAssistantStream,
 } from "../controllers/builder.controllers.js";
 import { authenticateUser } from "../middlewares/auth.middleware.js";
 
@@ -16,7 +18,9 @@ const router = Router();
 // All builder routes require authentication
 router.use(authenticateUser);
 
+router.post("/generate/stream", generateAiResumeStream);
 router.post("/generate", generateAiResume);
+router.post("/ai-write/stream", aiWriteAssistantStream);
 router.post("/ai-write", aiWriteAssistant);
 router.post("/:id/analyze", analyzeBuilderResume);
 router.get("/:id", getResumeById);

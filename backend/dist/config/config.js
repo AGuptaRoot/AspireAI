@@ -10,9 +10,17 @@ export const config = {
     Client_Url: process.env.CLIENT_URL || "http://localhost:5173",
     Gemini: {
         ApiKey: process.env.GEMINI_API_KEY || "",
-        Model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+        Model: process.env.GEMINI_MODEL || "gemini-3.6-flash", // Working fast flash model
         EmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL || "gemini-embedding-2",
+        Temperature: parseFloat(process.env.GEMINI_TEMPERATURE || "0.2"), // 0.2-0.4 for deterministic output
+        MaxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "3000", 10), // Tightly capped token limit
     },
+    OpenRouter: {
+        ApiKey: process.env.OPENROUTER_API_KEY || "",
+        Model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct", // High-throughput alternative
+        BaseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    },
+    AiProvider: (process.env.AI_PROVIDER || (process.env.OPENROUTER_API_KEY ? "openrouter" : "gemini")),
     Email: {
         Service: process.env.EMAIL_SERVICE || "gmail",
         User: process.env.EMAIL_USER || "adarshguptacoder@gmail.com",

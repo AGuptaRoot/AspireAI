@@ -1,7 +1,13 @@
 import { Request, Response } from "express";
 import { BuilderResume } from "../models/builderResume.models.js";
 import { Resume } from "../models/resume.models.js";
-import { generateResumeWithAi, analyzeResumeWithAi, assistResumeWritingWithAi } from "../services/ai.service.js";
+import {
+    generateResumeWithAi,
+    analyzeResumeWithAi,
+    assistResumeWritingWithAi,
+    streamResumeWithAi,
+    streamAssistResumeWritingWithAi,
+} from "../services/ai.service.js";
 
 /**
  * Generate a new AI resume from an existing uploaded resume or profile
@@ -317,4 +323,107 @@ export const aiWriteAssistant = async (req: Request, res: Response): Promise<voi
         });
     }
 };
+
+/**
+ * Stream AI Resume Generation chunk-by-chunk via Server-Sent Events (SSE)
+ * POST /api/builder/generate/stream
+ */
+export const generateAiResumeStream = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const userId = (req as any).user?._id;
+        const { resumeId, targetRole, title, customInstructions } = req.body;
+
+        let sourceResumeText = "";
+        let matchedResume = null;
+
+        if (resumeId) {
+            matchedResume = await Resume.findOne({ _id: resumeId, user: userId });
+            if (matchedResume) {
+                sourceResumeText = matchedResume.rawText;
+            }
+        } else {
+            matchedResume = await Resume.findOne({ user: userId }).sort({ createdAt: -1 });
+            if (matchedResume) {
+                sourceResumeText = matchedResume.rawText;
+            }
+        }
+
+        const effectiveRole = targetRole || (matchedResume?.analysis?.targetJobRoles?.[0]) || (req as any).user?.profession || "Full Stack Developer";
+        const candidateName = (req as any).user?.username || "Candidate";
+        const candidateEmail = (req as any).user?.email || "candidate@example.com";
+
+        // Set SSE Headers
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+
+        let fullContent = "";
+
+        for await (const chunk of streamResumeWithAi({
+            existingResumeText: sourceResumeText,
+            targetRole: effectiveRole,
+            userName: candidateName,
+            userEmail: candidateEmail,
+            customInstructions,
+        })) {
+            fullContent += chunk;
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+        }
+
+        fullContent = fullContent.replace(/^```markdown\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
+
+        const newResume = await BuilderResume.create({
+            user: userId,
+            title: title || `${effectiveRole} Resume (AI Generated)`,
+            targetRole: effectiveRole,
+            sourceResume: matchedResume?._id || null,
+            content: fullContent,
+            blocks: [],
+            status: "generated",
+        });
+
+        res.write(`data: ${JSON.stringify({ done: true, resume: newResume })}\n\n`);
+        res.end();
+    } catch (error: any) {
+        console.error("Error in streaming AI resume:", error);
+        res.write(`data: ${JSON.stringify({ error: error.message || "Streaming generation failed" })}\n\n`);
+        res.end();
+    }
+};
+
+/**
+ * Stream AI Writing Assistant tokens for BlockNote / Editor
+ * POST /api/builder/ai-write/stream
+ */
+export const aiWriteAssistantStream = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { prompt, selectedText, contextText, targetRole, action } = req.body;
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+
+        let accumulated = "";
+        for await (const chunk of streamAssistResumeWritingWithAi({
+            prompt,
+            selectedText,
+            contextText,
+            targetRole,
+            action,
+        })) {
+            accumulated += chunk;
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+        }
+
+        res.write(`data: ${JSON.stringify({ done: true, fullText: accumulated })}\n\n`);
+        res.end();
+    } catch (error: any) {
+        console.error("Error in streaming AI write:", error);
+        res.write(`data: ${JSON.stringify({ error: error.message || "Streaming write failed" })}\n\n`);
+        res.end();
+    }
+};
+
 

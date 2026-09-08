@@ -33,6 +33,7 @@ export const DashboardPage: React.FC = () => {
         activeResume,
         setActiveResume,
         deleteResume,
+        fetchResumes,
         interviews,
         fetchInterviews,
         isFetchingInterviews,
@@ -43,10 +44,11 @@ export const DashboardPage: React.FC = () => {
     const [showUploader, setShowUploader] = useState(false);
 
     useEffect(() => {
-        // Fetch fresh interviews and builder resumes when entering dashboard
+        // Fetch fresh resumes, interviews, and builder resumes when entering dashboard
+        fetchResumes();
         fetchInterviews();
         fetchBuilderResumes();
-    }, [fetchInterviews, fetchBuilderResumes]);
+    }, [fetchResumes, fetchInterviews, fetchBuilderResumes]);
 
     useEffect(() => {
         // If no active resume but resumes exist, pick first

@@ -1,7 +1,7 @@
 import ResumeModel from "../models/resume.models.js";
 import ChatSessionModel from "../models/chat.models.js";
 import { parsePdfBuffer } from "../services/resumeParser.service.js";
-import { analyzeResumeWithAi, queryResumeVectorStore } from "../services/ai.service.js";
+import { analyzeResumeWithAi, queryResumeVectorStore, streamCareerAssistantResponse } from "../services/ai.service.js";
 import mongoose from "mongoose";
 /**
  * Upload and parse resume PDF, run AI ATS analysis, and store in MongoDB
@@ -174,35 +174,31 @@ export const chatWithAiCareerAssistant = async (req, res) => {
                 message: "Question or query is required.",
             });
         }
-        // 1. Find target resume
-        let resume;
+        // 1. Find target resume if available
+        let resume = null;
         if (resumeId && mongoose.Types.ObjectId.isValid(resumeId)) {
             resume = await ResumeModel.findOne({ _id: resumeId, user: targetUserId });
         }
         else {
             resume = await ResumeModel.findOne({ user: targetUserId }).sort({ createdAt: -1 });
         }
-        if (!resume) {
-            return res.status(404).json({
-                success: false,
-                message: "No resume found for this user. Please upload your resume first before chatting.",
-            });
-        }
+        const resumeIdVal = resume?._id || null;
         // 2. Find or initialize Chat Session
         let chatSession = await ChatSessionModel.findOne({
             user: targetUserId,
-            resume: resume._id,
+            resume: resumeIdVal,
         });
         if (!chatSession) {
             chatSession = await ChatSessionModel.create({
                 user: targetUserId,
-                resume: resume._id,
-                title: `Career Chat for ${resume.fileName}`,
+                resume: resumeIdVal,
+                title: resume ? `Career Chat for ${resume.fileName}` : "AI Career Mentor Chat",
                 messages: [],
             });
         }
-        // 3. Query Vector Store with LangChain RAG (Vector Embedding -> result text -> AI prompt -> reply)
-        const { answer, relevantChunks, resultText } = await queryResumeVectorStore(resume.chunks, query.trim(), chatSession.messages);
+        // 3. Query Vector Store with LangChain RAG
+        const resumeChunks = resume?.chunks || [];
+        const { answer, relevantChunks, resultText } = await queryResumeVectorStore(resumeChunks, query.trim(), chatSession.messages);
         // 4. Save messages in chat history
         chatSession.messages.push({
             role: "user",
@@ -234,6 +230,87 @@ export const chatWithAiCareerAssistant = async (req, res) => {
     }
 };
 /**
+ * Stream Chat with AI Career Coach using Vector Embeddings & SSE
+ * POST /api/resume/chat/stream
+ */
+export const chatWithAiCareerAssistantStream = async (req, res) => {
+    try {
+        const targetUserId = req.user?._id || req.body.userId;
+        const { query, resumeId } = req.body;
+        if (!targetUserId) {
+            return res.status(401).json({
+                success: false,
+                message: "Authentication or userId is required.",
+            });
+        }
+        if (!query || typeof query !== "string" || query.trim() === "") {
+            return res.status(400).json({
+                success: false,
+                message: "Question or query is required.",
+            });
+        }
+        // 1. Find target resume if available
+        let resume = null;
+        if (resumeId && mongoose.Types.ObjectId.isValid(resumeId)) {
+            resume = await ResumeModel.findOne({ _id: resumeId, user: targetUserId });
+        }
+        else {
+            resume = await ResumeModel.findOne({ user: targetUserId }).sort({ createdAt: -1 });
+        }
+        const resumeIdVal = resume?._id || null;
+        let chatSession = await ChatSessionModel.findOne({
+            user: targetUserId,
+            resume: resumeIdVal,
+        });
+        if (!chatSession) {
+            chatSession = await ChatSessionModel.create({
+                user: targetUserId,
+                resume: resumeIdVal,
+                title: resume ? `Career Chat for ${resume.fileName}` : "AI Career Mentor Chat",
+                messages: [],
+            });
+        }
+        // Setup SSE headers
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        let accumulatedAnswer = "";
+        let relevantSources = [];
+        const resumeChunks = resume?.chunks || [];
+        for await (const event of streamCareerAssistantResponse(resumeChunks, query.trim(), chatSession.messages)) {
+            if (event.relevantChunks) {
+                relevantSources = event.relevantChunks;
+                res.write(`data: ${JSON.stringify({ meta: { sources: relevantSources, resultText: event.resultText } })}\n\n`);
+            }
+            if (event.text) {
+                accumulatedAnswer += event.text;
+                res.write(`data: ${JSON.stringify({ chunk: event.text })}\n\n`);
+            }
+        }
+        // Save messages in chat history
+        chatSession.messages.push({
+            role: "user",
+            content: query.trim(),
+            createdAt: new Date(),
+        });
+        chatSession.messages.push({
+            role: "assistant",
+            content: accumulatedAnswer,
+            sources: relevantSources,
+            createdAt: new Date(),
+        });
+        await chatSession.save();
+        res.write(`data: ${JSON.stringify({ done: true, sessionId: chatSession._id })}\n\n`);
+        res.end();
+    }
+    catch (error) {
+        console.error("AI Career Chat Stream error:", error);
+        res.write(`data: ${JSON.stringify({ error: error.message || "Streaming chat failed" })}\n\n`);
+        res.end();
+    }
+};
+/**
  * Get Chat History for a Resume
  */
 export const getChatHistory = async (req, res) => {
@@ -252,16 +329,14 @@ export const getChatHistory = async (req, res) => {
         else {
             resume = await ResumeModel.findOne({ user: req.user._id }).sort({ createdAt: -1 });
         }
-        if (!resume) {
-            return res.status(404).json({ success: false, message: "No resume found" });
-        }
+        const resumeIdVal = resume?._id || null;
         const chatSession = await ChatSessionModel.findOne({
             user: req.user._id,
-            resume: resume._id,
+            resume: resumeIdVal,
         });
         return res.status(200).json({
             success: true,
-            resumeId: resume._id,
+            resumeId: resumeIdVal,
             sessionId: chatSession?._id,
             messages: chatSession?.messages || [],
         });
@@ -290,12 +365,11 @@ export const clearChatHistory = async (req, res) => {
         else {
             resume = await ResumeModel.findOne({ user: req.user._id }).sort({ createdAt: -1 });
         }
-        if (resume) {
-            await ChatSessionModel.findOneAndDelete({
-                user: req.user._id,
-                resume: resume._id,
-            });
-        }
+        const resumeIdVal = resume?._id || null;
+        await ChatSessionModel.findOneAndDelete({
+            user: req.user._id,
+            resume: resumeIdVal,
+        });
         return res.status(200).json({
             success: true,
             message: "Chat history cleared successfully",

@@ -125,8 +125,8 @@ export interface ApiResponse<T = any> {
     message?: string;
     user?: User;
     accessToken?: string;
-    resume?: Resume;
-    resumes?: Resume[];
+    resume?: any;
+    resumes?: any;
     count?: number;
     analysis?: ResumeAnalysis;
     response?: string;
@@ -138,6 +138,7 @@ export interface ApiResponse<T = any> {
     result?: Interview;
     builderResume?: BuilderResume;
     builderResumes?: BuilderResume[];
+    data?: T;
     errors?: Array<{ field: string; message: string }>;
 }
 

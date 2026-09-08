@@ -10,7 +10,7 @@ export interface IChatMessage {
 export interface IChatSession extends Document {
     _id: mongoose.Types.ObjectId;
     user: mongoose.Types.ObjectId;
-    resume: mongoose.Types.ObjectId;
+    resume?: mongoose.Types.ObjectId | null;
     title: string;
     messages: IChatMessage[];
     createdAt: Date;
@@ -51,7 +51,8 @@ const ChatSessionSchema = new Schema<IChatSession>(
         resume: {
             type: Schema.Types.ObjectId,
             ref: "resume",
-            required: [true, "Resume reference is required"],
+            required: false,
+            default: null,
             index: true,
         },
         title: {

@@ -28,7 +28,8 @@ const ChatSessionSchema = new Schema({
     resume: {
         type: Schema.Types.ObjectId,
         ref: "resume",
-        required: [true, "Resume reference is required"],
+        required: false,
+        default: null,
         index: true,
     },
     title: {
