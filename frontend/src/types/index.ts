@@ -76,6 +76,7 @@ export interface ChatMessage {
     role: "user" | "assistant";
     content: string;
     sources?: string[];
+    mode?: "fast" | "deep" | "fastAi" | "deepThink";
     createdAt?: string;
 }
 

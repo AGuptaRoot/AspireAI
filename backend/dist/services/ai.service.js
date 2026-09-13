@@ -266,66 +266,122 @@ export const generateHeuristicAnalysis = (rawText, _fileName = "Resume.pdf") => 
     };
 };
 /**
- * Query Resume with Vector Embeddings and LangChain RAG
- * 1. Takes user query & resume text chunks
- * 2. Maps chunks into LangChain Documents and indexes in MemoryVectorStore
- * 3. Creates retriever with k=2 and queries vector embeddings to create 'result' text
- * 4. Passes 'result' context and 'query' to AI model for response
+ * Smart In-Memory Vector Store Cache to eliminate per-message embedding latency.
+ * Stores pre-indexed LangChain MemoryVectorStore instances keyed by resumeId or content hash.
  */
-export const queryResumeVectorStore = async (chunks, query, chatHistory = []) => {
+const vectorStoreCache = new Map();
+export const getOrCreateVectorStore = async (chunks, embeddings, resumeId) => {
+    if (!embeddings || chunks.length === 0)
+        return null;
+    const cacheKey = resumeId ? `resume_${resumeId}` : `chunks_${chunks.length}_${chunks[0]?.slice(0, 60)}`;
+    if (vectorStoreCache.has(cacheKey)) {
+        return vectorStoreCache.get(cacheKey);
+    }
+    try {
+        const documents = chunks.map((chunk) => new Document({ pageContent: chunk }));
+        const vectorStore = await MemoryVectorStore.fromDocuments(documents, embeddings);
+        vectorStoreCache.set(cacheKey, vectorStore);
+        return vectorStore;
+    }
+    catch (error) {
+        console.warn("⚠️ MemoryVectorStore initialization error:", error.message);
+        return null;
+    }
+};
+/**
+ * Pre-warm the vector store during resume upload/analysis asynchronously
+ */
+export const warmResumeVectorStore = async (chunks, resumeId) => {
     const embeddings = getEmbeddingModel();
-    const chatModel = getChatModel(0.4);
+    if (embeddings && chunks.length > 0) {
+        await getOrCreateVectorStore(chunks, embeddings, resumeId);
+    }
+};
+/**
+ * Query Resume with Dual Mode:
+ * - 'fast' (FastAI): Direct resume context without vector embedding for ultra-fast response. Full, detailed answer.
+ * - 'deep' (Deep Think): Semantic vector retrieval using LangChain MemoryVectorStore & Google Gemini Embeddings. Deep, precise analytical response.
+ */
+export const queryResumeVectorStore = async (chunks, query, chatHistory = [], resumeId, mode = "fast", rawResumeText) => {
     let result = "";
     let relevantChunks = [];
-    // 1. Vector Search using MemoryVectorStore if embeddings model is available
-    if (embeddings && chunks.length > 0) {
-        try {
-            const documents = chunks.map((chunk) => new Document({ pageContent: chunk }));
-            const vectorStore = await MemoryVectorStore.fromDocuments(documents, embeddings);
-            const retrieve = vectorStore.asRetriever({
-                k: Math.min(2, chunks.length),
+    const isDeepMode = mode === "deep";
+    if (isDeepMode) {
+        // Mode 2: Deep Think (WITH LangChain Vector Embeddings)
+        const embeddings = getEmbeddingModel();
+        if (embeddings && chunks.length > 0) {
+            try {
+                const vectorStore = await getOrCreateVectorStore(chunks, embeddings, resumeId);
+                if (vectorStore) {
+                    const retrieve = vectorStore.asRetriever({
+                        k: Math.min(3, chunks.length),
+                    });
+                    const resultDocs = await retrieve.invoke(query);
+                    relevantChunks = resultDocs.map((item) => item.pageContent);
+                    result = relevantChunks.join("\n\n");
+                }
+            }
+            catch (error) {
+                console.warn("⚠️ Vector store embedding retrieval warning:", error.message);
+            }
+        }
+        // Fallback if embeddings were unavailable
+        if (relevantChunks.length === 0 && chunks.length > 0) {
+            const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+            const scoredChunks = chunks.map((chunk) => {
+                const lower = chunk.toLowerCase();
+                const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
+                return { chunk, score };
             });
-            const resultDocs = await retrieve.invoke(query);
-            relevantChunks = resultDocs.map((item) => item.pageContent);
+            scoredChunks.sort((a, b) => b.score - a.score);
+            relevantChunks = scoredChunks.slice(0, 3).map((sc) => sc.chunk);
             result = relevantChunks.join("\n\n");
         }
-        catch (error) {
-            console.warn("⚠️ Vector store embedding retrieval warning:", error.message);
-        }
     }
-    // Fallback: If embeddings didn't run (e.g. offline dev/test), pick relevant chunks by term overlap
-    if (relevantChunks.length === 0 && chunks.length > 0) {
-        const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
-        const scoredChunks = chunks.map((chunk) => {
-            const lower = chunk.toLowerCase();
-            const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
-            return { chunk, score };
-        });
-        scoredChunks.sort((a, b) => b.score - a.score);
-        relevantChunks = scoredChunks.slice(0, 2).map((sc) => sc.chunk);
-        result = relevantChunks.join("\n\n");
+    else {
+        // Mode 1: FastAI (WITHOUT Vector Embedding - Direct Context)
+        result = rawResumeText
+            ? rawResumeText.slice(0, 10000)
+            : (chunks.length > 0 ? chunks.join("\n\n") : "");
+        relevantChunks = result ? ["Full Resume Direct Context (FastAI Engine)"] : [];
     }
-    // 2. Format Chat History Context if available
+    // Format Chat History Context if available
     const historyText = chatHistory
         .slice(-4)
         .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
         .join("\n");
-    // 3. Generate Answer with AI Chat Model using Context (result) and Question (query)
+    // Chat Model: 2500 tokens for FastAI, 3500 tokens for Deep Think (do not cut short)
+    const maxTokens = isDeepMode ? 3500 : 2500;
+    const chatModel = getChatModel(0.2, false, maxTokens);
     if (chatModel) {
         try {
-            const prompt = `
-You are an expert career coach and technical interview mentor.
+            const prompt = isDeepMode
+                ? `
+You are an elite career strategist, principal technical interviewer, and deep-thinking career mentor (Mode: Deep Think — LangChain Vector RAG Engine).
 
-${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide general career guidance, interview preparation strategies, or actionable resume advice based on your expertise."}
+${result ? `Referenced Vector Context from Resume:\n${result}` : "Candidate has not uploaded a resume yet. Provide in-depth general career guidance and preparation strategies."}
 
 ${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
 ${query}
 
 Instructions:
-- If resume context is present, ground your answer in the candidate's actual projects, skills, and background.
-- If a specific resume attribute or detail is requested but not in the context, mention that it is not in the uploaded resume.
-- For interview questions, role suitability, or general career queries, provide structured, actionable, and encouraging advice.
-- Keep the tone professional, concise, and clear (max 200 words).
+- Provide an in-depth, precise, and deeply analytical response grounded in the candidate's resume context.
+- Break down architectural nuances, specific project enhancements, technical interview talking points, and concrete actionable steps.
+- Structure your answer clearly with detailed bullet points and thorough explanations.
+- IMPORTANT: Do NOT cut your answer short. Deliver comprehensive, high-depth insights.
+`
+                : `
+You are an expert AI Career Coach and Technical Mentor (Mode: FastAI — Direct Context Engine).
+
+${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide actionable career guidance and resume advice."}
+
+${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
+${query}
+
+Instructions:
+- Analyze the candidate's question thoroughly against their background, projects, and skills.
+- Provide a clear, comprehensive, and well-structured response with concrete suggestions and career advice.
+- IMPORTANT: Do NOT cut your answer short. Give a full, detailed, and rich answer without artificial limits.
 `;
             const aiResponse = await chatModel.invoke(prompt);
             const answer = typeof aiResponse.content === "string"
@@ -335,6 +391,7 @@ Instructions:
                 answer,
                 relevantChunks,
                 resultText: result,
+                mode: isDeepMode ? "deepThink" : "fastAi",
             };
         }
         catch (error) {
@@ -347,6 +404,7 @@ Instructions:
         answer: fallbackAnswer,
         relevantChunks,
         resultText: result,
+        mode: isDeepMode ? "deepThink" : "fastAi",
     };
 };
 /**
@@ -1122,59 +1180,91 @@ Rewritten text:`;
     yield result;
 }
 /**
- * Stream Career Assistant Chat Response token-by-token
+ * Stream Career Assistant Chat Response token-by-token with Dual Mode:
+ * - 'fast' (FastAI): Direct context without vector embedding for ultra-fast streaming. Full, detailed answer.
+ * - 'deep' (Deep Think): Semantic vector retrieval using LangChain MemoryVectorStore & Google Gemini Embeddings. Deep, precise analytical response.
  */
-export async function* streamCareerAssistantResponse(chunks, query, chatHistory = []) {
-    const embeddings = getEmbeddingModel();
-    const chatModel = getChatModel(0.3, false, 2000);
+export async function* streamCareerAssistantResponse(chunks, query, chatHistory = [], resumeId, mode = "fast", rawResumeText) {
+    const isDeepMode = mode === "deep";
     let result = "";
     let relevantChunks = [];
-    // Vector search
-    if (embeddings && chunks.length > 0) {
-        try {
-            const documents = chunks.map((chunk) => new Document({ pageContent: chunk }));
-            const vectorStore = await MemoryVectorStore.fromDocuments(documents, embeddings);
-            const retrieve = vectorStore.asRetriever({ k: Math.min(2, chunks.length) });
-            const resultDocs = await retrieve.invoke(query);
-            relevantChunks = resultDocs.map((item) => item.pageContent);
+    if (isDeepMode) {
+        // Mode 2: Deep Think (WITH LangChain Vector Embeddings)
+        const embeddings = getEmbeddingModel();
+        if (embeddings && chunks.length > 0) {
+            try {
+                const vectorStore = await getOrCreateVectorStore(chunks, embeddings, resumeId);
+                if (vectorStore) {
+                    const retrieve = vectorStore.asRetriever({ k: Math.min(3, chunks.length) });
+                    const resultDocs = await retrieve.invoke(query);
+                    relevantChunks = resultDocs.map((item) => item.pageContent);
+                    result = relevantChunks.join("\n\n");
+                }
+            }
+            catch (error) {
+                console.warn("⚠️ Vector store retrieval warning:", error.message);
+            }
+        }
+        if (relevantChunks.length === 0 && chunks.length > 0) {
+            const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+            const scoredChunks = chunks.map((chunk) => {
+                const lower = chunk.toLowerCase();
+                const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
+                return { chunk, score };
+            });
+            scoredChunks.sort((a, b) => b.score - a.score);
+            relevantChunks = scoredChunks.slice(0, 3).map((sc) => sc.chunk);
             result = relevantChunks.join("\n\n");
         }
-        catch (error) {
-            console.warn("Vector store retrieval warning:", error.message);
-        }
     }
-    if (relevantChunks.length === 0 && chunks.length > 0) {
-        const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
-        const scoredChunks = chunks.map((chunk) => {
-            const lower = chunk.toLowerCase();
-            const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
-            return { chunk, score };
-        });
-        scoredChunks.sort((a, b) => b.score - a.score);
-        relevantChunks = scoredChunks.slice(0, 2).map((sc) => sc.chunk);
-        result = relevantChunks.join("\n\n");
+    else {
+        // Mode 1: FastAI (WITHOUT Vector Embedding - Direct Context for ultra-fast streaming)
+        result = rawResumeText
+            ? rawResumeText.slice(0, 10000)
+            : (chunks.length > 0 ? chunks.join("\n\n") : "");
+        relevantChunks = result ? ["Full Resume Direct Context (FastAI Engine)"] : [];
     }
-    // Yield initial context metadata
-    yield { relevantChunks, resultText: result };
+    // Yield initial context metadata and active mode
+    yield {
+        relevantChunks,
+        resultText: result,
+        mode: isDeepMode ? "deepThink" : "fastAi",
+    };
     const historyText = chatHistory
         .slice(-4)
         .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
         .join("\n");
+    const maxTokens = isDeepMode ? 3500 : 2500;
+    const chatModel = getChatModel(0.2, false, maxTokens);
     if (chatModel) {
         try {
-            const prompt = `
-You are an expert career coach and technical interview mentor.
+            const prompt = isDeepMode
+                ? `
+You are an elite career strategist, principal technical interviewer, and deep-thinking career mentor (Mode: Deep Think — LangChain Vector RAG Engine).
 
-${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide general career guidance, interview preparation strategies, or actionable resume advice based on your expertise."}
+${result ? `Referenced Vector Context from Resume:\n${result}` : "Candidate has not uploaded a resume yet. Provide in-depth general career guidance and preparation strategies."}
 
 ${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
 ${query}
 
 Instructions:
-- If resume context is present, ground your answer in the candidate's actual projects, skills, and background.
-- If a specific resume attribute or detail is requested but not in the context, mention that it is not in the uploaded resume.
-- For interview questions, role suitability, or general career queries, provide structured, actionable, and encouraging advice.
-- Keep the tone professional, concise, and clear (max 200 words).
+- Provide an in-depth, precise, and deeply analytical response grounded in the candidate's resume context.
+- Break down architectural nuances, specific project enhancements, technical interview talking points, and concrete actionable steps.
+- Structure your answer clearly with detailed bullet points and thorough explanations.
+- IMPORTANT: Do NOT cut your answer short. Deliver comprehensive, high-depth insights.
+`
+                : `
+You are an expert AI Career Coach and Technical Mentor (Mode: FastAI — Direct Context Engine).
+
+${result ? `Resume Context:\n${result}` : "Candidate has not uploaded a resume yet. Provide actionable career guidance and resume advice."}
+
+${historyText ? `Previous Conversation:\n${historyText}\n\n` : ""}Question:
+${query}
+
+Instructions:
+- Analyze the candidate's question thoroughly against their background, projects, and skills.
+- Provide a clear, comprehensive, and well-structured response with concrete suggestions and career advice.
+- IMPORTANT: Do NOT cut your answer short. Give a full, detailed, and rich answer without artificial limits.
 `;
             const stream = await chatModel.stream(prompt);
             for await (const chunk of stream) {

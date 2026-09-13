@@ -1,7 +1,7 @@
 import ResumeModel from "../models/resume.models.js";
 import ChatSessionModel from "../models/chat.models.js";
 import { parsePdfBuffer } from "../services/resumeParser.service.js";
-import { analyzeResumeWithAi, queryResumeVectorStore, streamCareerAssistantResponse } from "../services/ai.service.js";
+import { analyzeResumeWithAi, queryResumeVectorStore, streamCareerAssistantResponse, warmResumeVectorStore } from "../services/ai.service.js";
 import mongoose from "mongoose";
 /**
  * Upload and parse resume PDF, run AI ATS analysis, and store in MongoDB
@@ -20,16 +20,16 @@ export const uploadResume = async (req, res) => {
                 message: "No file uploaded. Please upload a PDF resume using field 'document' or 'resume'.",
             });
         }
-        const { originalname, size, mimetype, buffer } = req.file;
-        // 1. Parse PDF with pdf-parse-new and split text with LangChain RecursiveCharacterTextSplitter
+        const { originalname, size, buffer, mimetype } = req.file;
+        // 1. In-memory stream PDF text extraction & chunking
         const parsed = await parsePdfBuffer(buffer, 1000, 100);
-        // 2. Perform AI ATS Score Analysis and Analytics
-        let analysis;
+        // 2. Perform AI ATS analysis
+        let analysis = null;
         try {
             analysis = await analyzeResumeWithAi(parsed.rawText, originalname);
         }
-        catch (analysisErr) {
-            console.error("AI Analysis failed during upload, proceeding with upload:", analysisErr);
+        catch (aiErr) {
+            console.error("AI Analysis skipped or failed during upload:", aiErr.message);
         }
         // 3. Save Resume to MongoDB with userId reference, parsed text, chunks, and AI analysis
         const resumeDocument = await ResumeModel.create({
@@ -45,6 +45,10 @@ export const uploadResume = async (req, res) => {
             analysis,
             status: analysis ? "analyzed" : "uploaded",
         });
+        // 4. Pre-warm LangChain Vector Store in background so future chat queries have 0ms embedding delay
+        if (parsed.chunks && parsed.chunks.length > 0) {
+            warmResumeVectorStore(parsed.chunks, resumeDocument._id.toString()).catch((err) => console.warn("Vector store pre-warm warning:", err.message));
+        }
         return res.status(201).json({
             success: true,
             message: "Resume uploaded, parsed, and analyzed successfully!",
@@ -161,7 +165,7 @@ export const getResumeAnalytics = async (req, res) => {
 export const chatWithAiCareerAssistant = async (req, res) => {
     try {
         const targetUserId = req.user?._id || req.body.userId;
-        const { query, resumeId } = req.body;
+        const { query, resumeId, mode = "fast" } = req.body;
         if (!targetUserId) {
             return res.status(401).json({
                 success: false,
@@ -196,9 +200,9 @@ export const chatWithAiCareerAssistant = async (req, res) => {
                 messages: [],
             });
         }
-        // 3. Query Vector Store with LangChain RAG
+        // 3. Query Vector Store or Direct Context with Dual Mode (FastAI vs Deep Think)
         const resumeChunks = resume?.chunks || [];
-        const { answer, relevantChunks, resultText } = await queryResumeVectorStore(resumeChunks, query.trim(), chatSession.messages);
+        const { answer, relevantChunks, resultText, mode: activeMode } = await queryResumeVectorStore(resumeChunks, query.trim(), chatSession.messages, resumeIdVal?.toString(), (mode === "deep" ? "deep" : "fast"), resume?.rawText);
         // 4. Save messages in chat history
         chatSession.messages.push({
             role: "user",
@@ -219,6 +223,7 @@ export const chatWithAiCareerAssistant = async (req, res) => {
             sources: relevantChunks,
             sessionId: chatSession._id,
             totalMessages: chatSession.messages.length,
+            mode: activeMode,
         });
     }
     catch (error) {
@@ -236,7 +241,7 @@ export const chatWithAiCareerAssistant = async (req, res) => {
 export const chatWithAiCareerAssistantStream = async (req, res) => {
     try {
         const targetUserId = req.user?._id || req.body.userId;
-        const { query, resumeId } = req.body;
+        const { query, resumeId, mode = "fast" } = req.body;
         if (!targetUserId) {
             return res.status(401).json({
                 success: false,
@@ -278,10 +283,10 @@ export const chatWithAiCareerAssistantStream = async (req, res) => {
         let accumulatedAnswer = "";
         let relevantSources = [];
         const resumeChunks = resume?.chunks || [];
-        for await (const event of streamCareerAssistantResponse(resumeChunks, query.trim(), chatSession.messages)) {
+        for await (const event of streamCareerAssistantResponse(resumeChunks, query.trim(), chatSession.messages, resumeIdVal?.toString(), (mode === "deep" ? "deep" : "fast"), resume?.rawText)) {
             if (event.relevantChunks) {
                 relevantSources = event.relevantChunks;
-                res.write(`data: ${JSON.stringify({ meta: { sources: relevantSources, resultText: event.resultText } })}\n\n`);
+                res.write(`data: ${JSON.stringify({ meta: { sources: relevantSources, resultText: event.resultText, mode: event.mode } })}\n\n`);
             }
             if (event.text) {
                 accumulatedAnswer += event.text;

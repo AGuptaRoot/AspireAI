@@ -166,14 +166,14 @@ export const api = {
                 method: "DELETE",
             }),
 
-        chat: (payload: { query: string; resumeId?: string }) =>
+        chat: (payload: { query: string; resumeId?: string; mode?: "fast" | "deep" }) =>
             request<ApiResponse>("/api/resume/chat", {
                 method: "POST",
                 body: JSON.stringify(payload),
             }),
 
         chatStream: (
-            payload: { query: string; resumeId?: string },
+            payload: { query: string; resumeId?: string; mode?: "fast" | "deep" },
             onChunk: (chunk: string, meta?: any) => void,
             onDone?: (data?: any) => void,
             onError?: (err: any) => void

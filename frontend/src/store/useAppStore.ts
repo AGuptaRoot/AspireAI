@@ -22,6 +22,7 @@ interface AppState {
     chatMessages: ChatMessage[];
     isChatLoading: boolean;
     chatError: string | null;
+    chatMode: "fast" | "deep";
 
     // Interview State
     interviews: Interview[];
@@ -52,8 +53,9 @@ interface AppState {
 
     // Chat Actions
     fetchChatHistory: (resumeId?: string) => Promise<void>;
-    sendChatMessage: (query: string, resumeId?: string) => Promise<void>;
+    sendChatMessage: (query: string, resumeId?: string, overrideMode?: "fast" | "deep") => Promise<void>;
     clearChatHistory: (resumeId?: string) => Promise<void>;
+    setChatMode: (mode: "fast" | "deep") => void;
 
     // Interview Actions
     fetchInterviews: () => Promise<void>;
@@ -88,6 +90,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     chatMessages: [],
     isChatLoading: false,
     chatError: null,
+    chatMode: "fast",
+    setChatMode: (mode: "fast" | "deep") => set({ chatMode: mode }),
 
     interviews: [],
     isFetchingInterviews: false,
@@ -340,11 +344,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
     },
 
-    sendChatMessage: async (query: string, resumeId?: string) => {
+    sendChatMessage: async (query: string, resumeId?: string, overrideMode?: "fast" | "deep") => {
         const trimmed = query.trim();
         if (!trimmed) return;
 
         const activeId = resumeId || get().activeResume?._id;
+        const currentMode = overrideMode || get().chatMode;
 
         // Optimistically add user message and prepare streaming assistant message
         const optimisticUserMsg: ChatMessage = {
@@ -357,6 +362,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             role: "assistant",
             content: "",
             sources: [],
+            mode: currentMode,
             createdAt: new Date().toISOString(),
         };
 
@@ -368,13 +374,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         let streamedText = "";
         let metaSources: string[] = [];
+        let returnedMode: "fast" | "deep" | "fastAi" | "deepThink" = currentMode;
 
         try {
             await api.resume.chatStream(
-                { query: trimmed, resumeId: activeId },
+                { query: trimmed, resumeId: activeId, mode: currentMode },
                 (chunk, meta) => {
-                    if (meta && meta.sources) {
-                        metaSources = meta.sources;
+                    if (meta) {
+                        if (meta.sources) metaSources = meta.sources;
+                        if (meta.mode) returnedMode = meta.mode;
                     }
                     if (chunk) {
                         streamedText += chunk;
@@ -383,6 +391,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                             const last = msgs[msgs.length - 1];
                             if (last && last.role === "assistant") {
                                 last.content = streamedText;
+                                last.mode = returnedMode;
                                 if (metaSources.length > 0) last.sources = metaSources;
                             }
                             return { chatMessages: msgs, isChatLoading: false };
@@ -396,7 +405,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
             // If streaming yielded no content, fallback to standard post
             if (!streamedText) {
-                const res = await api.resume.chat({ query: trimmed, resumeId: activeId });
+                const res = await api.resume.chat({ query: trimmed, resumeId: activeId, mode: currentMode });
                 if (res.success && res.response) {
                     set((state) => {
                         const msgs = [...state.chatMessages];
@@ -404,6 +413,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                         if (last && last.role === "assistant") {
                             last.content = res.response || "";
                             last.sources = res.sources;
+                            last.mode = (res.mode as any) || currentMode;
                         }
                         return { chatMessages: msgs, isChatLoading: false };
                     });
@@ -425,7 +435,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         } catch (err: any) {
             if (!streamedText) {
                 try {
-                    const res = await api.resume.chat({ query: trimmed, resumeId: activeId });
+                    const res = await api.resume.chat({ query: trimmed, resumeId: activeId, mode: currentMode });
                     if (res.success && res.response) {
                         set((state) => {
                             const msgs = [...state.chatMessages];
@@ -433,6 +443,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                             if (last && last.role === "assistant") {
                                 last.content = res.response || "";
                                 last.sources = res.sources;
+                                last.mode = (res.mode as any) || currentMode;
                             }
                             return { chatMessages: msgs, isChatLoading: false };
                         });
